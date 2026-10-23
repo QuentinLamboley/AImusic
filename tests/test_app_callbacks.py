@@ -39,6 +39,67 @@ class WriterButtonsTest(unittest.TestCase):
         self.assertEqual(app.session_state["melodia_active_tab"], "🎹  Composer")
         self.assertIn("Une chanson pour mon père", app.session_state["song_lyrics"])
 
+    def test_french_custom_lyrics_reach_api_unchanged(self):
+        app = AppTest.from_file(str(APP_FILE)).run(timeout=40)
+        app.text_input(key="ace_api_key").set_value("TEST_KEY").run(timeout=40)
+        app.radio(key="song_mode").set_value("Personnalisé").run(timeout=40)
+        app.selectbox(key="lyrics_language").set_value("Français").run(timeout=40)
+        prompt = "Une chanson country avec guitare acoustique"
+        original_lyrics = "[Verse 1]\\nLa lumière danse sur ma maison\\n\\n[Chorus]\\nJe me souviens"
+        app.text_area(key="music_prompt").set_value(prompt).run(timeout=40)
+        app.text_area(key="song_lyrics").set_value(original_lyrics).run(timeout=40)
+
+        music_response = Mock(status_code=200, headers={"content-type": "application/json"})
+        encoded = base64.b64encode(b"TEST-MP3").decode()
+        music_response.json.return_value = {
+            "choices": [{"message": {
+                "audio": [{"audio_url": {"url": "data:audio/mpeg;base64," + encoded}}]
+            }}]
+        }
+        translator_response = Mock(status_code=200)
+        translator_response.json.return_value = [[[
+            "A warm country song featuring acoustic guitar", ""
+        ]]]
+        with (
+            patch("text_tools.requests.get", return_value=translator_response) as translate,
+            patch("ace_client.requests.post", return_value=music_response) as api,
+        ):
+            app = click_by_label(app, "✦ Créer ma musique")
+        self.assertFalse(app.exception)
+        self.assertEqual(api.call_count, 1)
+        self.assertEqual(translate.call_count, 1)
+        sent = api.call_args.kwargs["json"]
+        self.assertEqual(sent["audio_config"]["vocal_language"], "fr")
+        self.assertEqual(sent["vocal_language"], "fr")
+        self.assertIn("<prompt>A warm country song featuring acoustic guitar</prompt>", sent["messages"][0]["content"])
+        self.assertIn("<lyrics>" + original_lyrics + "</lyrics>", sent["messages"][0]["content"])
+
+    def test_french_simple_mode_requests_french_vocals(self):
+        app = AppTest.from_file(str(APP_FILE)).run(timeout=40)
+        app.text_input(key="ace_api_key").set_value("TEST_KEY").run(timeout=40)
+        app.selectbox(key="lyrics_language").set_value("Français").run(timeout=40)
+        app.text_area(key="simple_description").set_value(
+            "Une chanson joyeuse avec un violon"
+        ).run(timeout=40)
+        music_response = Mock(status_code=200, headers={"content-type": "application/json"})
+        encoded = base64.b64encode(b"TEST-MP3").decode()
+        music_response.json.return_value = {
+            "choices": [{"message": {
+                "audio": [{"audio_url": {"url": "data:audio/mpeg;base64," + encoded}}]
+            }}]
+        }
+        translator_response = Mock(status_code=200)
+        translator_response.json.return_value = [[["A joyful song with violin", ""]]]
+        with (
+            patch("text_tools.requests.get", return_value=translator_response),
+            patch("ace_client.requests.post", return_value=music_response) as api,
+        ):
+            app = click_by_label(app, "✦ Créer ma musique")
+        self.assertFalse(app.exception)
+        content = api.call_args.kwargs["json"]["messages"][0]["content"]
+        self.assertIn("in French", content)
+        self.assertEqual(api.call_args.kwargs["json"]["audio_config"]["vocal_language"], "fr")
+
     def test_random_mode_creates_and_refreshes_idea(self):
         idea = make_random_idea()
         self.assertTrue(idea["fr"])
