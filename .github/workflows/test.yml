@@ -1,0 +1,35 @@
+name: Vérification de MÉLODIA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Installer les dépendances
+        run: python -m pip install -r requirements.txt
+      - name: Vérifier la syntaxe Python
+        run: python -m compileall -q app.py ace_client.py text_tools.py tests/
+      - name: Tests unitaires sans requête externe
+        run: python -m unittest discover -s tests -v
+      - name: Test minimal de l'interface Streamlit
+        run: |
+          python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+          app = AppTest.from_file("app.py").run(timeout=40)
+          if app.exception:
+              raise RuntimeError(str([x.message for x in app.exception]))
+          print("Interface initialisée sans erreur.")
+          PY
