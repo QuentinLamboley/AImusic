@@ -10,7 +10,7 @@ from typing import Any
 import streamlit as st
 
 from ace_client import ACEError, MusicResult, build_payload, generate_music
-from text_tools import EXAMPLES, draft_lyrics, structure_lyrics, translate_to_english, TranslationUnavailable
+from text_tools import EXAMPLES, draft_lyrics, structure_lyrics, translate_to_english, translate_to_language, TranslationUnavailable
 from random_music import make_random_idea
 
 st.set_page_config(
@@ -67,6 +67,7 @@ DEFAULTS: dict[str, Any] = {
     "song_lyrics": "",
     "song_title": "",
     "song_mode": "Simple",
+    "lyrics_language": "Français",
     "writer_brief": "",
     "writer_mood": "Nostalgique",
     "draft_preview": "",
@@ -223,11 +224,33 @@ def run_generation(mode: str, title: str, original_prompt: str, custom_lyrics: s
     english = pretranslated_prompt if pretranslated_prompt is not None else prepare_english(original_prompt.strip())
     if not english.strip():
         raise ValueError("Décris d'abord ta musique.")
-    lyrics_en = prepare_english(custom_lyrics, preserve=True) if mode == "custom" and custom_lyrics.strip() else custom_lyrics
+    vocal_language = kwargs.pop("vocal_language", "fr")
+    language_names = {
+        "fr": "French", "en": "English", "es": "Spanish",
+        "de": "German", "it": "Italian", "pt": "Portuguese",
+    }
+    if vocal_language not in language_names:
+        raise ValueError("Langue des paroles inconnue.")
+    if mode == "custom" and custom_lyrics.strip():
+        # Les paroles françaises restent STRICTEMENT inchangées pour la langue française.
+        # Dans les autres langues, seules les paroles saisies en français sont adaptées.
+        lyrics_to_send, _ = translate_to_language(
+            custom_lyrics, target=vocal_language, preserve_sections=True
+        )
+    else:
+        lyrics_to_send = custom_lyrics
+    if mode == "simple" and not kwargs.get("instrumental", False):
+        english += (
+            f" Write and sing the lyrics in {language_names[vocal_language]}."
+            " Use authentic, natural phrasing in that language."
+        )
     if on_progress:
         on_progress("🎵 Composition en cours sur ACE Music…")
     source_mode = kwargs.pop("source_mode", None)
-    payload = build_payload(mode=mode, prompt=english, lyrics=lyrics_en, **kwargs)
+    payload = build_payload(
+        mode=mode, prompt=english, lyrics=lyrics_to_send,
+        vocal_language=vocal_language, **kwargs
+    )
     result = generate_music(st.session_state["ace_api_key"], payload, on_progress=on_progress)
     add_track(
         result, title=title, original=original_prompt,
@@ -357,6 +380,14 @@ with composer_tab:
         "Nom de votre création (facultatif)", key="song_title",
         placeholder="Ex. : Une nuit inoubliable",
     )
+    st.selectbox(
+        "Langue des paroles",
+        ["Français", "Anglais", "Espagnol", "Allemand", "Italien", "Portugais"],
+        key="lyrics_language",
+        help="La description musicale est préparée en anglais, mais les paroles "
+        "et la langue chantée utilisent votre choix. En français, les paroles "
+        "personnalisées sont conservées exactement comme vous les avez écrites.",
+    )
     c1, c2, c3 = st.columns([1.2, 1, 1])
     with c1:
         duration = st.slider("Durée souhaitée", min_value=20, max_value=360, step=10, value=60, format="%d s", help="Pour un premier essai, essayez une durée courte. Les générations longues risquent de dépasser les limites du serveur.")
@@ -397,6 +428,10 @@ with composer_tab:
                     custom_lyrics=user_lyrics,
                     pretranslated_prompt=st.session_state["random_idea"]["en"] if current_mode == "Aléatoire" else None,
                     source_mode=current_mode,
+                    vocal_language={
+                        "Français": "fr", "Anglais": "en", "Espagnol": "es",
+                        "Allemand": "de", "Italien": "it", "Portugais": "pt",
+                    }[st.session_state["lyrics_language"]],
                     duration=duration,
                     bpm=int(bpm) if set_bpm else None,
                     key_scale="" if key_scale == "Libre" else key_scale,
@@ -457,14 +492,18 @@ with writer_tab:
                         title="Ébauche IA : " + description[:45],
                         original_prompt="Écris une chanson originale à partir de ce thème : " + description,
                         pretranslated_prompt=(
-                            "Write expressive, complete original English song lyrics about: "
+                            "Write expressive, complete original song lyrics about: "
                             + prepare_english(description)
-                            + ". Structure the song with [Intro], [Verse 1], [Chorus], "
-                            "[Verse 2], [Chorus], [Outro]."
+                            + ". Use the selected song language. Structure the song with "
+                            "[Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro]."
                         ),
                         duration=60,
                         audio_format="mp3",
                         instrumental=False,
+                        vocal_language={
+                            "Français": "fr", "Anglais": "en", "Espagnol": "es",
+                            "Allemand": "de", "Italien": "it", "Portugais": "pt",
+                        }[st.session_state["lyrics_language"]],
                         thinking=False,
                         on_progress=lambda message: writer_status.info(message),
                     )
