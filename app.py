@@ -91,7 +91,11 @@ def flash(message: str) -> None:
     st.session_state["notice"] = message
 
 
-def forget_api_key() -> None:\n    st.session_state["ace_api_key"] = ""\n\n\ndef insert_example() -> None:
+def forget_api_key() -> None:
+    st.session_state["ace_api_key"] = ""
+
+
+def insert_example() -> None:
     st.session_state["music_prompt"] = EXAMPLES["prompt"]
     st.session_state["song_lyrics"] = EXAMPLES["lyrics"]
     st.session_state["song_mode"] = "Personnalisé"
@@ -207,7 +211,8 @@ def run_generation(mode: str, title: str, original_prompt: str, custom_lyrics: s
     if not english.strip():
         raise ValueError("Décris d'abord ta musique.")
     lyrics_en = custom_lyrics
-    if mode == "custom" and custom_lyrics.strip() and kwargs.pop("translate_lyrics", True):
+    translate_lyrics = kwargs.pop("translate_lyrics", True)
+    if mode == "custom" and custom_lyrics.strip() and translate_lyrics:
         lyrics_en = prepare_english(custom_lyrics, True, preserve=True)
     payload = build_payload(mode=mode, prompt=english, lyrics=lyrics_en, **kwargs)
     result = generate_music(st.session_state["ace_api_key"], payload)
@@ -237,9 +242,7 @@ with st.sidebar:
         st.info("Ajoutez votre clé pour créer une chanson.", icon="🔑")
     st.link_button("Obtenir ma clé gratuite ↗", "https://acemusic.ai/api-key", use_container_width=True)
     st.caption("Ne communiquez jamais votre clé à quelqu'un. Elle reste dans la mémoire de votre session Streamlit, puis est transmise à ACE Music pour authentifier vos demandes.")
-    if st.button("Oublier la clé de cette session", use_container_width=True):
-        st.session_state["ace_api_key"] = ""
-        st.rerun()
+    st.button("Oublier la clé de cette session", use_container_width=True, on_click=forget_api_key)
     st.divider()
     st.markdown("#### ✨ Prise en main")
     st.markdown(
