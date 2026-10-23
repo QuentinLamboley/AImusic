@@ -100,7 +100,7 @@ class TestPayload(unittest.TestCase):
         google.return_value.translate.side_effect = RuntimeError("Google temporarily unavailable")
         memory.return_value.translate.side_effect = lambda text: "Line of country song"
         translated, done = translate_to_english(
-            "[Verse 1]\\nJe rêve de partir\\nJe vois la lumière\\n\\n[Chorus]\\nJe chante",
+            "[Verse 1]\nJe rêve de partir\nJe vois la lumière\n\n[Chorus]\nJe chante",
             preserve_sections=True,
         )
         self.assertTrue(done)
