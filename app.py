@@ -10,7 +10,7 @@ from typing import Any
 import streamlit as st
 
 from ace_client import ACEError, MusicResult, build_payload, generate_music
-from text_tools import EXAMPLES, draft_lyrics, structure_lyrics, translate_to_english, is_probably_french
+from text_tools import EXAMPLES, draft_lyrics, structure_lyrics, translate_to_english, TranslationUnavailable
 from random_music import make_random_idea
 
 st.set_page_config(
@@ -208,38 +208,24 @@ def render_song(track: dict[str, Any], index: int, namespace: str = "composer") 
 
 
 def prepare_english(text: str, preserve: bool = False) -> str:
-    try:
-        prepared, _ = translate_to_english(text, preserve_sections=preserve)
-        return prepared
-    except Exception:
-        # Les services de traduction sont tiers : un incident chez eux ne doit
-        # jamais empêcher l'envoi de la composition à ACE Music.
-        return text
+    """Le moteur ne reçoit pas de consignes françaises non traduites."""
+    prepared, _ = translate_to_english(text, preserve_sections=preserve)
+    return prepared
 
 
 def run_generation(mode: str, title: str, original_prompt: str, custom_lyrics: str = "", **kwargs: Any) -> MusicResult:
     if not st.session_state.get("ace_api_key", "").strip():
         raise ACEError("Ajoute d'abord ta clé API ACE Music dans la barre de gauche.")
+    on_progress = kwargs.pop("on_progress", None)
+    if on_progress:
+        on_progress("🎼 Préparation de la composition…")
     pretranslated_prompt = kwargs.pop("pretranslated_prompt", None)
     english = pretranslated_prompt if pretranslated_prompt is not None else prepare_english(original_prompt.strip())
     if not english.strip():
         raise ValueError("Décris d'abord ta musique.")
     lyrics_en = prepare_english(custom_lyrics, preserve=True) if mode == "custom" and custom_lyrics.strip() else custom_lyrics
-    # Dernier recours : laisser le moteur interpréter le texte en français
-    # plutôt que bloquer systématiquement les créations. Une adaptation
-    # fidèle en anglais n'est alors pas garantie.
-    if is_probably_french(english):
-        english = (
-            "Compose an original song with expressive English-language lyrics. "
-            "Interpret this French musical direction accurately and naturally: "
-            + english
-        )
-    if mode == "custom" and lyrics_en.strip() and is_probably_french(lyrics_en):
-        english += (
-            "\nAdapt the supplied French lyrics into natural, singable English, "
-            "respecting their meaning and [Verse]/[Chorus] structure."
-        )
-    on_progress = kwargs.pop("on_progress", None)
+    if on_progress:
+        on_progress("🎵 Composition en cours sur ACE Music…")
     source_mode = kwargs.pop("source_mode", None)
     payload = build_payload(mode=mode, prompt=english, lyrics=lyrics_en, **kwargs)
     result = generate_music(st.session_state["ace_api_key"], payload, on_progress=on_progress)
@@ -388,7 +374,7 @@ with composer_tab:
             key_scale = st.selectbox("Tonalité", ["Libre", "C Major", "C Minor", "D Major", "D Minor", "E Major", "E Minor", "F Major", "F Minor", "G Major", "G Minor", "A Major", "A Minor", "B Major", "B Minor"])
         with a3:
             time_signature = st.selectbox("Signature rythmique", ["Libre", "4/4", "3/4", "6/8", "2/4"])
-        thinking = st.checkbox("Composition enrichie (modèle de planification)", value=True)
+        thinking = st.checkbox("Composition enrichie (modèle de planification)", value=False)
         use_format = st.checkbox("Laisser ACE Music améliorer la présentation du prompt personnalisé", value=False, disabled=st.session_state["song_mode"] == "Simple")
         st.caption("Tous les réglages musicaux sont indicatifs : le modèle peut ne pas les suivre exactement.")
 
@@ -469,11 +455,17 @@ with writer_tab:
                     generated = run_generation(
                         mode="simple",
                         title="Ébauche IA : " + description[:45],
-                        original_prompt="Write expressive, complete original song lyrics about: " + prepare_english(description) + ". Structure with [Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro].",
+                        original_prompt="Écris une chanson originale à partir de ce thème : " + description,
+                        pretranslated_prompt=(
+                            "Write expressive, complete original English song lyrics about: "
+                            + prepare_english(description)
+                            + ". Structure the song with [Intro], [Verse 1], [Chorus], "
+                            "[Verse 2], [Chorus], [Outro]."
+                        ),
                         duration=60,
                         audio_format="mp3",
                         instrumental=False,
-                        thinking=True,
+                        thinking=False,
                         on_progress=lambda message: writer_status.info(message),
                     )
                 writer_status.empty()
