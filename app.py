@@ -430,7 +430,7 @@ with writer_tab:
                     generated = run_generation(
                         mode="simple",
                         title="Ébauche IA : " + description[:45],
-                        original_prompt="Write expressive, complete original song lyrics about: " + description + ". Structure with [Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro].",
+                        original_prompt="Write expressive, complete original song lyrics about: " + prepare_english(description, True) + ". Structure with [Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro].",
                         duration=60,
                         audio_format="mp3",
                         instrumental=False,
