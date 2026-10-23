@@ -1,7 +1,10 @@
 """Tests fonctionnels des deux boutons de l'atelier, sans appel au réseau."""
 import unittest
+from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
+
+APP_FILE = Path(__file__).resolve().parent.parent / "app.py"
 
 
 def click_by_label(app: AppTest, label: str) -> AppTest:
@@ -13,7 +16,7 @@ def click_by_label(app: AppTest, label: str) -> AppTest:
 
 class WriterButtonsTest(unittest.TestCase):
     def test_structure_updates_the_visible_editor(self):
-        app = AppTest.from_file("app.py").run(timeout=40)
+        app = AppTest.from_file(str(APP_FILE)).run(timeout=40)
         self.assertFalse(app.exception)
         app.text_area(key="draft_preview").set_value(
             "Le vent souffle dans la vallée\nJe prends la route\n\nJe pars demain"
@@ -24,7 +27,7 @@ class WriterButtonsTest(unittest.TestCase):
         self.assertIn("[Chorus]", app.session_state["draft_preview"])
 
     def test_transfer_selects_composer_and_sets_custom_lyrics(self):
-        app = AppTest.from_file("app.py").run(timeout=40)
+        app = AppTest.from_file(str(APP_FILE)).run(timeout=40)
         self.assertFalse(app.exception)
         app.text_area(key="draft_preview").set_value("Une chanson pour mon père").run(timeout=40)
         app = click_by_label(app, "↗ Utiliser ces paroles en mode Personnalisé")
