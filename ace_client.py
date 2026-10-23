@@ -79,7 +79,7 @@ def build_payload(
     body: dict[str, Any] = {
         "model": MODEL,
         "messages": [{"role": "user", "content": content}],
-        "stream": False,
+        "stream": True,
         "sample_mode": mode == "simple",
         "thinking": bool(thinking),
         "use_format": bool(use_format) if mode == "custom" else False,
@@ -204,38 +204,175 @@ def parse_response(data: dict[str, Any], fallback_format: str = "mp3") -> MusicR
     )
 
 
-def generate_music(api_key: str, payload: dict[str, Any]) -> MusicResult:
-    """Un seul POST : pas de répétition automatique qui consommerait du quota."""
+def parse_stream(lines: Any, fallback_format: str = "mp3", on_progress: Any = None) -> MusicResult:
+    """Assemble le flux SSE ACE-Step (métadonnées, battements de coeur, audio).
+
+    Un évènement peut occuper plusieurs lignes 'data:'. Les morceaux audio base64
+    ne sont jamais stockés dans les logs. Aucun appel API supplémentaire.
+    """
+    content_parts: list[str] = []
+    audio_items: list[Any] = []
+    model_id = MODEL
+    saw_event = False
+    started_generation = False
+    event_lines: list[str] = []
+
+    def emit(message: str) -> None:
+        if on_progress is not None:
+            try:
+                on_progress(message)
+            except Exception:
+                pass  # Une mise à jour UI ne doit pas gâcher un morceau.
+
+    def handle_event(text: str) -> bool:
+        nonlocal model_id, saw_event, started_generation
+        if text.strip() == "[DONE]":
+            return True
+        try:
+            chunk = __import__("json").loads(text)
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(chunk, dict):
+            return False
+        if chunk.get("error"):
+            raise ACEError("ACE Music a signalé une erreur pendant la composition. Aucune nouvelle requête n'a été envoyée.")
+        saw_event = True
+        model_id = str(chunk.get("model") or model_id)
+        choices = chunk.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            return False
+        choice = choices[0]
+        delta = choice.get("delta") or choice.get("message") or {}
+        if not isinstance(delta, dict):
+            return False
+        content = _coerce_text(delta.get("content"))
+        # ACE-Step émet "." toutes les deux secondes pour maintenir le flux.
+        if content and content != ".":
+            content_parts.append(content)
+            if not started_generation:
+                emit("🎼 Analyse musicale et préparation des paroles…")
+                started_generation = True
+        if content == "." and not started_generation:
+            emit("🎚️ Le serveur compose votre musique…")
+            started_generation = True
+        audio = delta.get("audio") or []
+        if isinstance(audio, (str, dict)):
+            audio = [audio]
+        if isinstance(audio, list) and audio:
+            audio_items.extend(audio)
+            emit("🎧 Réception et préparation de votre fichier audio…")
+        return choice.get("finish_reason") == "stop"
+
+    try:
+        for raw in lines:
+            if isinstance(raw, bytes):
+                line = raw.decode("utf-8", errors="replace")
+            else:
+                line = str(raw)
+            line = line.rstrip("\r\n")
+            if line.startswith("data:"):
+                event_lines.append(line[5:].lstrip())
+            elif not line and event_lines:
+                done = handle_event("\n".join(event_lines))
+                event_lines = []
+                if done:
+                    break
+        if event_lines:
+            handle_event("\n".join(event_lines))
+    except requests.RequestException as exc:
+        if not audio_items:
+            raise ACEError(
+                "La connexion avec ACE Music a été interrompue avant la réception du fichier. "
+                "Cela peut venir du serveur distant, même après une seule tentative."
+            ) from exc
+        # Un fichier audio complet déjà reçu peut encore être récupéré.
+
+    if not audio_items:
+        if saw_event:
+            raise ACEError(
+                "ACE Music a répondu progressivement, mais n'a fourni aucun audio. "
+                "La génération a peut-être expiré sur ses serveurs."
+            )
+        raise ACEError(
+            "ACE Music n'a retourné aucun évènement musical. "
+            "Le serveur peut être surchargé ou indisponible."
+        )
+    result = parse_response(
+        {"model": model_id, "choices": [{"message": {
+            "content": "".join(content_parts),
+            "audio": audio_items,
+        }}]},
+        fallback_format=fallback_format,
+    )
+    emit("✅ Le morceau est prêt.")
+    return result
+
+
+def generate_music(
+    api_key: str,
+    payload: dict[str, Any],
+    on_progress: Any = None,
+) -> MusicResult:
+    """Un seul POST SSE ; ni relance automatique ni clé dans les messages d'erreur."""
     if not api_key.strip():
         raise ACEError("Renseigne ta clé API ACE Music dans le panneau de gauche.")
+    request_payload = dict(payload)
+    # Le streaming fournit des évènements réguliers, contrairement à une unique
+    # réponse bloquante, et peut éviter certains délais d'attente réseau.
+    request_payload["stream"] = True
     try:
         response = requests.post(
             f"{BASE_URL}/v1/chat/completions",
-            json=payload,
+            json=request_payload,
             headers={
                 "Authorization": f"Bearer {api_key.strip()}",
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                "Accept": "text/event-stream, application/json",
             },
-            timeout=(15, 420),
+            timeout=(20, 150),  # Délai entre deux données, PAS durée totale.
+            stream=True,
+            allow_redirects=False,
         )
     except requests.Timeout as exc:
-        raise ACEError("ACE Music ne répond pas assez vite. La génération a peut-être abouti côté serveur : vérifie avant de réessayer.") from exc
+        raise ACEError(
+            "ACE Music n'a pas répondu à temps. Il s'agit d'une expiration de connexion, "
+            "pas nécessairement d'un quota ou d'une erreur de saisie."
+        ) from exc
     except requests.RequestException as exc:
-        raise ACEError("Impossible de joindre ACE Music. Vérifie ta connexion et réessaie plus tard.") from exc
+        raise ACEError("Impossible de joindre ACE Music. Vérifie ta connexion ou l'état du fournisseur.") from exc
 
-    if response.status_code == 401 or response.status_code == 403:
-        raise ACEError("Clé API refusée. Vérifie-la sur acemusic.ai/api-key.")
-    if response.status_code == 429:
-        raise ACEError("Limite de requêtes ACE Music atteinte. Réessaie plus tard.")
-    if response.status_code in (502, 503, 504):
-        raise ACEError(f"ACE Music est temporairement indisponible (HTTP {response.status_code}). Évite les relances répétées.")
-    if response.status_code >= 400:
-        raise ACEError(f"ACE Music a refusé la génération (HTTP {response.status_code}).")
     try:
-        data = response.json()
-    except ValueError as exc:
-        raise ACEError("Réponse non JSON reçue du fournisseur.") from exc
-    if not isinstance(data, dict):
-        raise ACEError("Réponse de l'API inattendue.")
-    return parse_response(data, payload.get("audio_config", {}).get("format", "mp3"))
+        if response.status_code in (401, 403):
+            raise ACEError("Clé API refusée. Vérifie-la sur acemusic.ai/api-key.")
+        if response.status_code == 429:
+            raise ACEError("ACE Music limite actuellement les requêtes (HTTP 429). Réessaie plus tard.")
+        if response.status_code == 504:
+            raise ACEError(
+                "ACE Music a dépassé son temps de réponse (HTTP 504), même avec une seule tentative. "
+                "Un incident du service externe a déjà été signalé. Aucun nouvel appel n'a été lancé."
+            )
+        if response.status_code in (502, 503):
+            raise ACEError(
+                f"ACE Music ne peut pas traiter la requête actuellement (HTTP {response.status_code}). "
+                "Aucun nouvel appel n'a été lancé."
+            )
+        if response.status_code >= 400:
+            raise ACEError(f"ACE Music a refusé la génération (HTTP {response.status_code}).")
+        if response.status_code in (301, 302, 303, 307, 308):
+            raise ACEError("ACE Music redirige sa requête au lieu de générer un morceau.")
+
+        content_type = (response.headers or {}).get("content-type", "").lower()
+        fallback_format = request_payload.get("audio_config", {}).get("format", "mp3")
+        if "text/event-stream" in content_type:
+            return parse_stream(response.iter_lines(), fallback_format, on_progress)
+
+        # Compatibilité avec un serveur qui ignore 'stream: true'.
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ACEError("ACE Music a renvoyé une réponse inattendue, non musicale.") from exc
+        if not isinstance(data, dict):
+            raise ACEError("Réponse ACE Music incorrecte.")
+        return parse_response(data, fallback_format)
+    finally:
+        response.close()
