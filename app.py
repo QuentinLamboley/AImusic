@@ -278,8 +278,8 @@ with composer_tab:
             "Description musicale (prompt)",
             key="music_prompt",
             height=140,
-            placeholder="Exemple : Un morceau post-punk mélancolique aux guitares anguleuses, "
-            "basse motrice, voix masculine grave et synthétiseurs froids.",
+            placeholder="Exemple : Une chanson country chaleureuse et entraînante, avec guitare acoustique, "
+            "pedal steel guitar, voix masculine grave et ambiance de route au coucher du soleil.",
             help="Décrivez le style, les instruments, la production et la voix ; pas les paroles.",
         )
         st.markdown("**Paroles structurées**")
