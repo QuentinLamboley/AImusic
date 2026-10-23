@@ -114,7 +114,7 @@ export default function Studio(){
   const [tab,setTab]=useState("compose"),[mode,setMode]=useState("simple"),[apiKey,setApiKey]=useState("");
   const [prompt,setPrompt]=useState(""),[lyrics,setLyrics]=useState(""),[title,setTitle]=useState("");
   const [lang,setLang]=useState("fr"),[length,setLength]=useState(60),[format,setFormat]=useState("mp3");
-  const [instrumental,setInstrumental]=useState(false),[setBpm,setSetBpm]=useState(false),[bpm,setBpm]=useState(120);
+  const [instrumental,setInstrumental]=useState(false),[customTempo,setCustomTempo]=useState(false),[bpm,setBpm]=useState(120);
   const [thinking,setThinking]=useState(false),[randomIdea,setRandomIdea]=useState(()=>createIdea());
   const [brief,setBrief]=useState(""),[mood,setMood]=useState("Nostalgique"),[draft,setDraft]=useState("");
   const [tracks,setTracks]=useState([]),[status,setStatus]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
@@ -156,7 +156,7 @@ export default function Studio(){
           pretranslatedPrompt:override?.english||(mode==="random"?randomIdea.english:undefined),
           language:lang,duration:override?.duration||length,format:override?.format||format,
           instrumental:override?.instrumental??instrumental,
-          thinking, setBpm,bpm
+          thinking,setBpm:customTempo,bpm
         }),signal:aborter.signal,cache:"no-store"
       });
       if(!response.ok){
@@ -293,8 +293,8 @@ export default function Studio(){
             <label className="check"><input type="checkbox" checked={instrumental} onChange={e=>setInstrumental(e.target.checked)}/>Instrumental, sans chant</label>
             <details className="details"><summary>Réglages avancés</summary>
               <div className="formgrid">
-                <label className="check"><input type="checkbox" checked={setBpm} onChange={e=>setSetBpm(e.target.checked)}/>Tempo personnalisé</label>
-                <Field label="BPM"><input type="number" className="field" min={45} max={220} disabled={!setBpm} value={bpm} onChange={e=>setBpm(Number(e.target.value))}/></Field>
+                <label className="check"><input type="checkbox" checked={customTempo} onChange={e=>setCustomTempo(e.target.checked)}/>Tempo personnalisé</label>
+                <Field label="BPM"><input type="number" className="field" min={45} max={220} disabled={!customTempo} value={bpm} onChange={e=>setBpm(Number(e.target.value))}/></Field>
                 <label className="check"><input type="checkbox" checked={thinking} onChange={e=>setThinking(e.target.checked)}/>Composition enrichie</label>
               </div>
             </details>
