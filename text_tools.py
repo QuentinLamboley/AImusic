@@ -145,7 +145,7 @@ def _translated_french(text: str) -> bool:
         return False
 
 
-def _translate_network(source: str, deadline: float) -> str:
+def _translate_network(source: str, deadline: float, target: str = "en") -> str:
     """Deux fournisseurs publics ; un délai global est partagé par les appels.
 
     L'API Google utilisée est non officielle : si elle change, le second
@@ -165,7 +165,7 @@ def _translate_network(source: str, deadline: float) -> str:
             if provider == "google":
                 response = requests.get(
                     _GOOGLE_ENDPOINT,
-                    params={"client": "gtx", "sl": "fr", "tl": "en", "dt": "t", "q": source},
+                    params={"client": "gtx", "sl": "fr", "tl": target, "dt": "t", "q": source},
                     timeout=timeout,
                 )
                 response.raise_for_status()
@@ -179,7 +179,7 @@ def _translate_network(source: str, deadline: float) -> str:
                     continue
                 response = requests.get(
                     _MEMORY_ENDPOINT,
-                    params={"q": source, "langpair": "fr|en"},
+                    params={"q": source, "langpair": f"fr|{target}"},
                     timeout=timeout,
                 )
                 response.raise_for_status()
@@ -190,7 +190,7 @@ def _translate_network(source: str, deadline: float) -> str:
             candidate = candidate.strip()
             if not candidate or _translated_french(candidate):
                 raise ValueError("Réponse non traduite")
-            return _natural_musical_english(candidate)
+            return _natural_musical_english(candidate) if target == "en" else candidate
         except (requests.RequestException, ValueError, KeyError, TypeError, IndexError) as exc:
             errors.append(type(exc).__name__)
     raise TranslationUnavailable(
@@ -199,19 +199,27 @@ def _translate_network(source: str, deadline: float) -> str:
     )
 
 
-def translate_to_english(text: str, *, force: bool = False, preserve_sections: bool = False) -> tuple[str, bool]:
+def translate_to_language(
+    text: str,
+    target: str = "en",
+    *,
+    force: bool = False,
+    preserve_sections: bool = False,
+) -> tuple[str, bool]:
     """Prépare la description/les paroles en anglais sans altérer les balises.
 
     Un seul délai global de 15 s évite les attentes cumulées de plusieurs
     traducteurs. Ne prétend jamais avoir traduit un texte si le réseau échoue.
     """
-    if not text.strip():
+    if target not in ("fr", "en", "es", "de", "it", "pt"):
+        raise ValueError("Langue non reconnue.")
+    if not text.strip() or target == "fr":
         return text, False
     if not force and not is_probably_french(text):
         return text, False
     deadline = time.monotonic() + _TRANSLATION_SECONDS
     if not preserve_sections:
-        return _translate_network(text, deadline), True
+        return _translate_network(text, deadline, target), True
 
     lines = text.splitlines()
     content_indexes = [
@@ -229,7 +237,7 @@ def translate_to_english(text: str, *, force: bool = False, preserve_sections: b
     # Une seule requête pour conserver le contexte de la chanson.
     source = "\n".join(lines[i] for i in content_indexes)
     try:
-        result = _translate_network(source, deadline)
+        result = _translate_network(source, deadline, target)
         result_lines = result.splitlines()
         if len(result_lines) == len(content_indexes) and all(x.strip() for x in result_lines):
             for i, translated in zip(content_indexes, result_lines):
@@ -257,7 +265,7 @@ def translate_to_english(text: str, *, force: bool = False, preserve_sections: b
         left = deadline - time.monotonic()
         if left <= 0.8:
             raise TranslationUnavailable("La préparation des paroles a dépassé son délai.")
-        translated = _translate_network("\n".join(lines[i] for i in group), deadline)
+        translated = _translate_network("\n".join(lines[i] for i in group), deadline, target)
         translated_lines = translated.splitlines()
         if len(translated_lines) != len(group):
             raise TranslationUnavailable(
@@ -267,6 +275,18 @@ def translate_to_english(text: str, *, force: bool = False, preserve_sections: b
         for i, value in zip(group, translated_lines):
             lines[i] = value.strip()
     return "\n".join(lines), True
+
+
+def translate_to_english(
+    text: str,
+    *,
+    force: bool = False,
+    preserve_sections: bool = False,
+) -> tuple[str, bool]:
+    """Prépare un texte français en anglais pour la description musicale."""
+    return translate_to_language(
+        text, target="en", force=force, preserve_sections=preserve_sections
+    )
 
 
 def structure_lyrics(text: str) -> str:
