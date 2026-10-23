@@ -52,29 +52,49 @@ class WriterButtonsTest(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertTrue(app.session_state["random_idea"]["fr"])
 
-    def test_translation_services_down_does_not_block_song_request(self):
+    def test_translation_services_down_prevents_french_api_request(self):
+        import requests
         app = AppTest.from_file(str(APP_FILE)).run(timeout=40)
         app.text_input(key="ace_api_key").set_value("TEST_KEY").run(timeout=40)
         app.text_area(key="simple_description").set_value(
             "Une chanson country joyeuse avec une guitare et une voix grave"
         ).run(timeout=40)
-        audio = base64.b64encode(b"TEST-MP3").decode()
+        with (
+            patch("text_tools.requests.get", side_effect=requests.Timeout("offline")),
+            patch("ace_client.requests.post") as api,
+        ):
+            app = click_by_label(app, "✦ Créer ma musique")
+        self.assertFalse(app.exception)
+        api.assert_not_called()
+        self.assertEqual(len(app.session_state["tracks"]), 0)
+        self.assertTrue(any("préparation" in error.message.lower() for error in app.error))
+
+    def test_french_song_sends_only_english_to_api(self):
+        app = AppTest.from_file(str(APP_FILE)).run(timeout=40)
+        app.text_input(key="ace_api_key").set_value("TEST_KEY").run(timeout=40)
+        app.text_area(key="simple_description").set_value(
+            "Une chanson country joyeuse avec guitare"
+        ).run(timeout=40)
         response = Mock(status_code=200, headers={"content-type": "application/json"})
+        audio = base64.b64encode(b"TEST-MP3").decode()
         response.json.return_value = {
             "choices": [{"message": {
                 "audio": [{"audio_url": {"url": "data:audio/mpeg;base64," + audio}}]
             }}]
         }
+        translation_response = Mock(status_code=200)
+        translation_response.json.return_value = [[[
+            "A cheerful country song with acoustic guitar", ""
+        ]]]
         with (
-            patch("text_tools.GoogleTranslator", side_effect=RuntimeError("offline")),
-            patch("text_tools.MyMemoryTranslator", side_effect=RuntimeError("offline")),
-            patch("ace_client.requests.post", return_value=response) as request,
+            patch("text_tools.requests.get", return_value=translation_response),
+            patch("ace_client.requests.post", return_value=response) as api,
         ):
             app = click_by_label(app, "✦ Créer ma musique")
         self.assertFalse(app.exception)
-        self.assertEqual(request.call_count, 1)
-        sent = request.call_args.kwargs["json"]["messages"][0]["content"]
-        self.assertIn("Interpret this French musical direction", sent)
+        self.assertEqual(api.call_count, 1)
+        sent = api.call_args.kwargs["json"]["messages"][0]["content"]
+        self.assertEqual(sent, "A cheerful country song with acoustic guitar")
         self.assertEqual(len(app.session_state["tracks"]), 1)
 
     def test_random_generation_works_without_translation_services(self):
@@ -89,8 +109,7 @@ class WriterButtonsTest(unittest.TestCase):
             }}]
         }
         with (
-            patch("text_tools.GoogleTranslator", side_effect=AssertionError("no translation")),
-            patch("text_tools.MyMemoryTranslator", side_effect=AssertionError("no translation")),
+            patch("text_tools.requests.get", side_effect=AssertionError("No translator needed")),
             patch("ace_client.requests.post", return_value=response) as request,
         ):
             app = click_by_label(app, "✦ Créer ma musique")
