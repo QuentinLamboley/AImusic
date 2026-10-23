@@ -7,7 +7,7 @@ Application **Streamlit en français**, reliée à l’API [ACE Music](https://a
 - **Mode Simple** : une description en français suffit ; le modèle crée le style, la structure et les paroles.
 - **Mode Personnalisé** : description musicale et paroles structurées avec `[Intro]`, `[Verse 1]`, `[Chorus]`, `[Outro]` ; réglages de durée, tempo, tonalité, format, instrumental.
 - **Atelier de paroles** : ébauche locale à partir d’une idée ; génération de véritables paroles IA via le mode Simple d’ACE Music (cette seconde option lance **aussi** une génération audio), édition et traduction vers l’anglais.
-- **Traduction FR → EN** du prompt lors de la génération et traduction des paroles à la demande, en conservant les marqueurs de structure.
+- **Préparation FR → EN en arrière-plan** des descriptions et paroles, avec préservation des marqueurs de structure. Le mode Aléatoire dispose directement de descriptions anglaises.
 - Lecteur intégré, téléchargements MP3/WAV/FLAC selon l’API, export paroles TXT et fiche JSON, bibliothèque dans la session.
 
 ## Utiliser sur Streamlit Community Cloud
@@ -35,9 +35,9 @@ Pour un test minimal, utiliser 20 à 40 secondes, MP3, mais un échec reste poss
 
 ## Limites et confidentialité
 
-- L’API hébergée d’ACE Music peut limiter le débit, être indisponible ou retourner des erreurs 504. Nous ne réessayons **jamais automatiquement** une génération susceptible d’avoir déjà abouti.
+- L’API hébergée d’ACE Music peut limiter le débit, être indisponible ou retourner des erreurs 504. Nous ne réessayons **jamais automatiquement** une génération susceptible d’avoir déjà abouti. Une attente globale de 240 secondes est appliquée au flux SSE, avec un délai maximal d’inactivité de 40 secondes par lecture. Une génération interrompue côté client peut continuer chez le fournisseur.
 - Aucun prix ou quota illimité n’est garanti par ce dépôt.
-- La traduction française vers l’anglais utilise l’outil tiers **Google Translate via `deep-translator`** et nécessite Internet. Les textes à traduire sont transmis à ce service ; ne pas y soumettre de contenu confidentiel. L’API de traduction n’est pas officielle et peut devenir indisponible.
+- La préparation linguistique utilise des services tiers (Google Traduction, interface non officielle, puis MyMemory en secours), avec des délais réseau courts et un budget global de 15 secondes. Les textes sont transmis à ces services ; ne pas y soumettre de contenu confidentiel. Si tous les services échouent, aucune requête musicale avec des instructions françaises non préparées n’est lancée. La qualité stylistique des traductions n’est pas garantie.
 - **Ébauche locale** de paroles : modèles de phrases prédéfinis, sans LLM. **Écriture IA** : déclenche une vraie génération musicale ACE Music et récupère les paroles produites dans la réponse ; elle consomme donc une requête API.
 - La bibliothèque est uniquement en mémoire de la session Streamlit. Les morceaux ne sont pas persistés sur un serveur ; téléchargez-les avant de fermer la page.
 - La disponibilité des formats et les droits d’utilisation des pistes sont soumis aux conditions du service ACE Music.
