@@ -91,6 +91,29 @@ def flash(message: str) -> None:
     st.session_state["notice"] = message
 
 
+def structure_draft() -> None:
+    current = st.session_state.get("draft_preview", "")
+    if not current.strip():
+        flash("Ajoute d'abord quelques paroles dans le brouillon.")
+        return
+    structured = structure_lyrics(current)
+    st.session_state["draft_preview"] = structured
+    if structured == current.strip():
+        flash("Les paroles sont déjà structurées.")
+    else:
+        flash("Les paroles sont structurées.")
+
+
+def send_draft_to_composer() -> None:
+    current = st.session_state.get("draft_preview", "")
+    if not current.strip():
+        flash("Le brouillon est vide.")
+        return
+    st.session_state["song_lyrics"] = structure_lyrics(current)
+    st.session_state["song_mode"] = "Personnalisé"
+    st.session_state["melodia_active_tab"] = "🎹  Composer"
+
+
 def forget_api_key() -> None:
     st.session_state["ace_api_key"] = ""
 
@@ -237,7 +260,8 @@ if st.session_state.get("notice"):
     st.info(st.session_state.pop("notice"))
 
 composer_tab, writer_tab, library_tab, help_tab = st.tabs(
-    ["🎹  Composer", "✍️  Atelier de paroles", "🎧  Ma bibliothèque", "❔  Guide"]
+    ["🎹  Composer", "✍️  Atelier de paroles", "🎧  Ma bibliothèque", "❔  Guide"],
+    key="melodia_active_tab", on_change="rerun",
 )
 
 with composer_tab:
@@ -419,18 +443,13 @@ with writer_tab:
         height=355,
         placeholder="[Verse 1]\n…\n\n[Chorus]\n…",
     )
-    if st.button("🔧 Structurer les paroles", use_container_width=True):
-        newdraft = structure_lyrics(st.session_state["draft_preview"])
-        queue_fields(draft_preview=newdraft)
-    if st.button("↗ Utiliser ces paroles en mode Personnalisé", type="primary", use_container_width=True):
-        if not st.session_state["draft_preview"].strip():
-            st.warning("Le brouillon est vide.")
-        else:
-            queue_fields(
-                song_lyrics=structure_lyrics(st.session_state["draft_preview"]),
-                song_mode="Personnalisé",
-            )
-    st.caption("Après l'importation, ouvrez l'onglet Composer : vos paroles seront prêtes dans le mode Personnalisé.")
+    st.button("🔧 Structurer les paroles", on_click=structure_draft, use_container_width=True)
+    st.button(
+        "↗ Utiliser ces paroles en mode Personnalisé",
+        type="primary",
+        on_click=send_draft_to_composer,
+        use_container_width=True,
+    )
 
 with library_tab:
     st.markdown("### 🎧 Mes créations")
