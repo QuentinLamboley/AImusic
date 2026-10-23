@@ -159,7 +159,7 @@ def render_song(track: dict[str, Any], index: int, namespace: str = "composer") 
         use_container_width=True,
         key=f"text_{namespace}_{index}",
     )
-    project_data = {k: v for k, v in track.items() if k not in ("audio",)}
+    project_data = {k: v for k, v in track.items() if k not in ("audio", "english_prompt")}
     c3.download_button(
         "💾 Fiche du projet",
         data=json.dumps(project_data, ensure_ascii=False, indent=2).encode("utf-8"),
