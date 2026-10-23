@@ -91,7 +91,7 @@ def flash(message: str) -> None:
     st.session_state["notice"] = message
 
 
-def insert_example() -> None:
+def forget_api_key() -> None:\n    st.session_state["ace_api_key"] = ""\n\n\ndef insert_example() -> None:
     st.session_state["music_prompt"] = EXAMPLES["prompt"]
     st.session_state["song_lyrics"] = EXAMPLES["lyrics"]
     st.session_state["song_mode"] = "Personnalisé"
@@ -139,7 +139,7 @@ def file_stub(title: str) -> str:
     return cleaned[:55] or "ma-composition"
 
 
-def render_song(track: dict[str, Any], index: int) -> None:
+def render_song(track: dict[str, Any], index: int, namespace: str = "composer") -> None:
     title = html.escape(track["title"])
     st.markdown(
         f'<div class="glass-card"><span class="mini-label">PISTE {index + 1:02d}</span>'
@@ -155,7 +155,7 @@ def render_song(track: dict[str, Any], index: int) -> None:
         file_name=f"{file_stub(track['title'])}.{track['format']}",
         mime=track["mime"],
         use_container_width=True,
-        key=f"audio_{index}",
+        key=f"audio_{namespace}_{index}",
     )
     c2.download_button(
         "📄 Paroles et description",
@@ -166,7 +166,7 @@ def render_song(track: dict[str, Any], index: int) -> None:
         file_name=f"{file_stub(track['title'])}-paroles.txt",
         mime="text/plain",
         use_container_width=True,
-        key=f"text_{index}",
+        key=f"text_{namespace}_{index}",
     )
     project_data = {k: v for k, v in track.items() if k not in ("audio",)}
     c3.download_button(
@@ -175,7 +175,7 @@ def render_song(track: dict[str, Any], index: int) -> None:
         file_name=f"{file_stub(track['title'])}-projet.json",
         mime="application/json",
         use_container_width=True,
-        key=f"project_{index}",
+        key=f"project_{namespace}_{index}",
     )
     with st.expander("Voir le prompt envoyé et les paroles obtenues"):
         st.markdown("**Description envoyée (anglais)**")
@@ -489,7 +489,7 @@ with library_tab:
         )
     else:
         for idx, track in enumerate(st.session_state["tracks"]):
-            render_song(track, idx)
+            render_song(track, idx, "library")
             st.divider()
 
 with help_tab:
