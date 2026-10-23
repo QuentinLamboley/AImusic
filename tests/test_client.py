@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch, Mock
 
 from ace_client import ACEError, build_payload, parse_response, generate_music, extract_lyrics, parse_stream
-from text_tools import structure_lyrics
+from text_tools import structure_lyrics, translate_to_english
 
 
 class TestPayload(unittest.TestCase):
@@ -83,6 +83,30 @@ class TestPayload(unittest.TestCase):
         lyrics = structure_lyrics("First line\nSecond line\n\nHere we sing")
         self.assertIn("[Verse 1]", lyrics)
         self.assertIn("[Chorus]", lyrics)
+
+    @patch("text_tools.MyMemoryTranslator")
+    @patch("text_tools.GoogleTranslator")
+    def test_lyrics_writing_translation_fallback(self, google, memory):
+        google.return_value.translate.side_effect = RuntimeError("Google temporarily unavailable")
+        memory.return_value.translate.return_value = "A father tinkering with old machines"
+        translated, done = translate_to_english("Un père qui bricole des machines anciennes")
+        self.assertTrue(done)
+        self.assertIn("father", translated)
+        self.assertTrue(memory.return_value.translate.called)
+
+    @patch("text_tools.MyMemoryTranslator")
+    @patch("text_tools.GoogleTranslator")
+    def test_verses_preserved_with_fallback(self, google, memory):
+        google.return_value.translate.side_effect = RuntimeError("Google temporarily unavailable")
+        memory.return_value.translate.side_effect = lambda text: "Line of country song"
+        translated, done = translate_to_english(
+            "[Verse 1]\\nJe rêve de partir\\nJe vois la lumière\\n\\n[Chorus]\\nJe chante",
+            preserve_sections=True,
+        )
+        self.assertTrue(done)
+        self.assertIn("[Verse 1]", translated)
+        self.assertIn("[Chorus]", translated)
+        self.assertIn("Line of country song", translated)
 
     def test_sse_heartbeat_and_audio(self):
         """Assemblage des fragments SSE + battements de coeur sans appel réseau."""
