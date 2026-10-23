@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass
+import time
+from html import unescape
 
-from deep_translator import GoogleTranslator, MyMemoryTranslator
+import requests
 from langdetect import DetectorFactory, detect, LangDetectException
 
 DetectorFactory.seed = 0
@@ -125,83 +126,147 @@ def _natural_musical_english(text: str) -> str:
     return text
 
 
-def translate_to_english(text: str, *, force: bool = False, preserve_sections: bool = False) -> tuple[str, bool]:
-    """Préparation linguistique idiomatique des contenus transmis au moteur.
+class TranslationUnavailable(ValueError):
+    """Le texte n'a pas pu être préparé dans le délai imparti."""
 
-    Les balises de structure et la mise en vers restent inchangées.
-    Les saisies déjà anglaises sont utilisées telles quelles.
+
+_TRANSLATION_SECONDS = 15.0
+_GOOGLE_ENDPOINT = "https://translate.googleapis.com/translate_a/single"
+_MEMORY_ENDPOINT = "https://api.mymemory.translated.net/get"
+
+
+def _translated_french(text: str) -> bool:
+    """Contrôle conservateur des résultats manifestement restés en français."""
+    if len(text.strip()) < 12:
+        return False
+    try:
+        return detect(text) == "fr"
+    except LangDetectException:
+        return False
+
+
+def _translate_network(source: str, deadline: float) -> str:
+    """Deux fournisseurs publics ; un délai global est partagé par les appels.
+
+    L'API Google utilisée est non officielle : si elle change, le second
+    fournisseur est sollicité sans nouvelle intervention de l'utilisateur.
+    """
+    if not source.strip():
+        return source
+    if len(source) > 4500:
+        raise TranslationUnavailable("Le texte est trop long pour être préparé.")
+    errors = []
+    for provider in ("google", "mymemory"):
+        left = deadline - time.monotonic()
+        if left <= 0.8:
+            break
+        try:
+            timeout = (min(2.0, left / 2), min(4.5, max(1.0, left - 0.4)))
+            if provider == "google":
+                response = requests.get(
+                    _GOOGLE_ENDPOINT,
+                    params={"client": "gtx", "sl": "fr", "tl": "en", "dt": "t", "q": source},
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+                candidate = "".join(
+                    segment[0] for segment in data[0]
+                    if isinstance(segment, list) and segment and isinstance(segment[0], str)
+                )
+            else:
+                if len(source) > 480:
+                    continue
+                response = requests.get(
+                    _MEMORY_ENDPOINT,
+                    params={"q": source, "langpair": "fr|en"},
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+                if int(data.get("responseStatus", 200)) != 200:
+                    raise ValueError("Service translation unavailable")
+                candidate = unescape(str(data.get("responseData", {}).get("translatedText") or ""))
+            candidate = candidate.strip()
+            if not candidate or _translated_french(candidate):
+                raise ValueError("Réponse non traduite")
+            return _natural_musical_english(candidate)
+        except (requests.RequestException, ValueError, KeyError, TypeError, IndexError) as exc:
+            errors.append(type(exc).__name__)
+    raise TranslationUnavailable(
+        "La préparation du texte est momentanément indisponible. "
+        "Tu peux essayer plus tard, ou saisir une description en anglais."
+    )
+
+
+def translate_to_english(text: str, *, force: bool = False, preserve_sections: bool = False) -> tuple[str, bool]:
+    """Prépare la description/les paroles en anglais sans altérer les balises.
+
+    Un seul délai global de 15 s évite les attentes cumulées de plusieurs
+    traducteurs. Ne prétend jamais avoir traduit un texte si le réseau échoue.
     """
     if not text.strip():
         return text, False
     if not force and not is_probably_french(text):
         return text, False
-    def translate_passage(source: str) -> str:
-        if len(source) > 4500:
-            raise ValueError("Texte trop long pour le traitement linguistique.")
-        try:
-            result = GoogleTranslator(source="auto", target="en").translate(source)
-            if not result or not result.strip():
-                raise ValueError("Aucun résultat.")
-        except Exception:
-            # Second fournisseur indépendant : une indisponibilité de Google
-            # ne doit pas empêcher l'écriture de la chanson.
-            fallback = MyMemoryTranslator(source="fr", target="en")
-            if len(source) <= 480 and "\n" not in source:
-                result = fallback.translate(source)
-            else:
-                # MyMemory impose une limite de longueur plus restrictive.
-                # Conserver chaque ligne de chanson au lieu de les fusionner.
-                import textwrap
-                pieces = []
-                for line in source.split("\n"):
-                    if not line.strip():
-                        pieces.append("")
-                    else:
-                        fragments = textwrap.wrap(
-                            line, width=440, break_long_words=False,
-                            break_on_hyphens=False,
-                        )
-                        pieces.append(" ".join(fallback.translate(part) for part in fragments))
-                result = "\n".join(pieces)
-        if not result or not str(result).strip():
-            raise ValueError("Le traitement linguistique n'a pas abouti.")
-        return _natural_musical_english(str(result).strip())
-
+    deadline = time.monotonic() + _TRANSLATION_SECONDS
     if not preserve_sections:
-        return translate_passage(text), True
+        return _translate_network(text, deadline), True
 
-    # Chaque section est traitée en conservant le contexte du couplet, puis ses
-    # lignes : un changement de mise en forme du traducteur ne doit pas fusionner
-    # des vers qui doivent être chantés séparément.
-    translated: list[str] = []
-    stanza: list[str] = []
+    lines = text.splitlines()
+    content_indexes = [
+        i for i, line in enumerate(lines)
+        if line.strip() and not TAG_PATTERN.fullmatch(line)
+    ]
+    if not content_indexes:
+        return text, False
+    translatable_indexes = [
+        i for i in content_indexes if force or is_probably_french(lines[i])
+    ]
+    if not translatable_indexes:
+        return text, False
 
-    def flush_stanza() -> None:
-        if not stanza:
-            return
-        source = "\n".join(stanza)
-        if not force and not is_probably_french(source):
-            translated.extend(stanza)
+    # Une seule requête pour conserver le contexte de la chanson.
+    source = "\n".join(lines[i] for i in content_indexes)
+    try:
+        result = _translate_network(source, deadline)
+        result_lines = result.splitlines()
+        if len(result_lines) == len(content_indexes) and all(x.strip() for x in result_lines):
+            for i, translated in zip(content_indexes, result_lines):
+                lines[i] = translated.strip()
+            return "\n".join(lines), True
+    except TranslationUnavailable:
+        pass
+
+    # Si le fournisseur a fusionné les lignes, retraiter par strophe (un
+    # traducteur supplémentaire par ligne serait excessivement lent).
+    groups = []
+    active = []
+    for i, line in enumerate(lines):
+        if not line.strip() or TAG_PATTERN.fullmatch(line):
+            if active:
+                groups.append(active)
+                active = []
         else:
-            candidate = translate_passage(source)
-            candidate_lines = candidate.splitlines()
-            if len(candidate_lines) == len(stanza) and all(line.strip() for line in candidate_lines):
-                translated.extend(line.strip() for line in candidate_lines)
-            else:
-                translated.extend(translate_passage(line) for line in stanza)
-        stanza.clear()
-
-    for line in text.splitlines():
-        if TAG_PATTERN.fullmatch(line):
-            flush_stanza()
-            translated.append(line.strip())
-        elif not line.strip():
-            flush_stanza()
-            translated.append("")
-        else:
-            stanza.append(line)
-    flush_stanza()
-    return "\n".join(translated).strip(), True
+            active.append(i)
+    if active:
+        groups.append(active)
+    for group in groups:
+        if not any(i in translatable_indexes for i in group):
+            continue
+        left = deadline - time.monotonic()
+        if left <= 0.8:
+            raise TranslationUnavailable("La préparation des paroles a dépassé son délai.")
+        translated = _translate_network("\n".join(lines[i] for i in group), deadline)
+        translated_lines = translated.splitlines()
+        if len(translated_lines) != len(group):
+            raise TranslationUnavailable(
+                "Impossible de conserver correctement la structure des paroles. "
+                "Réessaie plus tard."
+            )
+        for i, value in zip(group, translated_lines):
+            lines[i] = value.strip()
+    return "\n".join(lines), True
 
 
 def structure_lyrics(text: str) -> str:
