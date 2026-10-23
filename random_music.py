@@ -86,6 +86,6 @@ def make_random_idea() -> dict[str, str]:
             f"An original {style_en} song, {mood_en}, featuring {inst_en} "
             f"and {vocal_en}. The lyrics tell a story about {theme_en}. "
             f"An immersive musical atmosphere with {prod_en}. "
-            "Write expressive, original English lyrics with a clear verse and chorus structure."
+            "Write expressive, original lyrics with a clear verse and chorus structure."
         ),
     }
