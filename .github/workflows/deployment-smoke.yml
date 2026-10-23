@@ -1,0 +1,34 @@
+name: Diagnostic de l'application publique
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  public-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Contrôler l'URL Streamlit déployée
+        shell: bash
+        run: |
+          echo "Contrôle de l'application MÉLODIA hébergée"
+          for path in "/" "/_stcore/health"; do
+            echo "---- Chemin: $path ----"
+            outfile=$(mktemp)
+            headers=$(mktemp)
+            status=$(curl -sS -L --connect-timeout 10 --max-time 28 \
+              -D "$headers" -o "$outfile" -w '%{http_code}' \
+              "https://aimusic-philou.streamlit.app${path}") || status="CURL_ERROR"
+            echo "Statut HTTP: $status"
+            echo "URL finale:"
+            grep -i '^location:' "$headers" | tail -3 || true
+            echo "Type de contenu:"
+            grep -i '^content-type:' "$headers" | tail -1 || true
+            echo "Aperçu public (200 premiers caractères):"
+            head -c 200 "$outfile" | tr '\n' ' ' || true
+            echo ""
+            rm -f "$outfile" "$headers"
+          done
+          echo "Les requêtes ne contiennent aucune clé API."
