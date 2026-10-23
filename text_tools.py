@@ -5,7 +5,7 @@ import random
 import re
 from dataclasses import dataclass
 
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator
 from langdetect import DetectorFactory, detect, LangDetectException
 
 DetectorFactory.seed = 0
@@ -135,15 +135,37 @@ def translate_to_english(text: str, *, force: bool = False, preserve_sections: b
         return text, False
     if not force and not is_probably_french(text):
         return text, False
-    translator = GoogleTranslator(source="auto", target="en")
-
     def translate_passage(source: str) -> str:
         if len(source) > 4500:
             raise ValueError("Texte trop long pour le traitement linguistique.")
-        result = translator.translate(source)
-        if not result or not result.strip():
+        try:
+            result = GoogleTranslator(source="auto", target="en").translate(source)
+            if not result or not result.strip():
+                raise ValueError("Aucun résultat.")
+        except Exception:
+            # Second fournisseur indépendant : une indisponibilité de Google
+            # ne doit pas empêcher l'écriture de la chanson.
+            fallback = MyMemoryTranslator(source="fr", target="en")
+            if len(source) <= 480 and "\n" not in source:
+                result = fallback.translate(source)
+            else:
+                # MyMemory impose une limite de longueur plus restrictive.
+                # Conserver chaque ligne de chanson au lieu de les fusionner.
+                import textwrap
+                pieces = []
+                for line in source.split("\n"):
+                    if not line.strip():
+                        pieces.append("")
+                    else:
+                        fragments = textwrap.wrap(
+                            line, width=440, break_long_words=False,
+                            break_on_hyphens=False,
+                        )
+                        pieces.append(" ".join(fallback.translate(part) for part in fragments))
+                result = "\n".join(pieces)
+        if not result or not str(result).strip():
             raise ValueError("Le traitement linguistique n'a pas abouti.")
-        return _natural_musical_english(result.strip())
+        return _natural_musical_english(str(result).strip())
 
     if not preserve_sections:
         return translate_passage(text), True
