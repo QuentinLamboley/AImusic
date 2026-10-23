@@ -3,8 +3,8 @@ import base64
 import unittest
 from unittest.mock import patch, Mock
 
-from ace_client import ACEError, build_payload, parse_response, generate_music, extract_lyrics, parse_stream
-from text_tools import structure_lyrics, translate_to_english
+from ace_client import ACEError, build_payload, parse_response, generate_music, extract_lyrics, parse_stream, MAX_GENERATION_SECONDS
+from text_tools import structure_lyrics, translate_to_english, TranslationUnavailable
 
 
 class TestPayload(unittest.TestCase):
@@ -12,6 +12,9 @@ class TestPayload(unittest.TestCase):
         data = build_payload(mode="simple", prompt="A bright jazz track", duration=80)
         self.assertTrue(data["sample_mode"])
         self.assertTrue(data["stream"])
+        self.assertFalse(data["use_cot_caption"])
+        self.assertFalse(data["use_cot_language"])
+        self.assertFalse(data["use_cot_metas"])
         self.assertEqual(data["messages"][0]["content"], "A bright jazz track")
         self.assertEqual(data["audio_config"]["duration"], 80)
         self.assertEqual(data["audio_config"]["vocal_language"], "en")
@@ -84,29 +87,70 @@ class TestPayload(unittest.TestCase):
         self.assertIn("[Verse 1]", lyrics)
         self.assertIn("[Chorus]", lyrics)
 
-    @patch("text_tools.MyMemoryTranslator")
-    @patch("text_tools.GoogleTranslator")
-    def test_lyrics_writing_translation_fallback(self, google, memory):
-        google.return_value.translate.side_effect = RuntimeError("Google temporarily unavailable")
-        memory.return_value.translate.return_value = "A father tinkering with old machines"
+    @patch("text_tools.requests.get")
+    def test_google_translation_returns_english(self, get):
+        response = Mock(status_code=200)
+        response.json.return_value = [[["A father repairing vintage machines", ""]]]
+        get.return_value = response
         translated, done = translate_to_english("Un père qui bricole des machines anciennes")
         self.assertTrue(done)
-        self.assertIn("father", translated)
-        self.assertTrue(memory.return_value.translate.called)
+        self.assertIn("father", translated.lower())
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(get.call_args.kwargs["params"]["tl"], "en")
+        self.assertIn("timeout", get.call_args.kwargs)
 
-    @patch("text_tools.MyMemoryTranslator")
-    @patch("text_tools.GoogleTranslator")
-    def test_verses_preserved_with_fallback(self, google, memory):
-        google.return_value.translate.side_effect = RuntimeError("Google temporarily unavailable")
-        memory.return_value.translate.side_effect = lambda text: "Line of country song"
+    @patch("text_tools.requests.get")
+    def test_translation_uses_secondary_provider_when_google_fails(self, get):
+        import requests
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "responseStatus": 200,
+            "responseData": {"translatedText": "A father repairing vintage machines"},
+        }
+        get.side_effect = [requests.Timeout("offline"), response]
+        translated, done = translate_to_english("Un père qui bricole des machines anciennes")
+        self.assertTrue(done)
+        self.assertIn("father", translated.lower())
+        self.assertEqual(get.call_count, 2)
+        self.assertIn("mymemory", get.call_args.args[0])
+
+    @patch("text_tools.requests.get")
+    def test_both_translators_down_fails_without_sending_french(self, get):
+        import requests
+        get.side_effect = requests.Timeout("offline")
+        with self.assertRaises(TranslationUnavailable):
+            translate_to_english("Une chanson douce avec guitare et voix grave")
+        self.assertEqual(get.call_count, 2)
+
+    @patch("text_tools.requests.get")
+    def test_verses_preserved_in_english(self, get):
+        response = Mock(status_code=200)
+        response.json.return_value = [[["I dream of leaving\\nI see the light\\nI sing", ""]]]
+        get.return_value = response
         translated, done = translate_to_english(
-            "[Verse 1]\nJe rêve de partir\nJe vois la lumière\n\n[Chorus]\nJe chante",
+            "[Verse 1]\\nJe rêve de partir\\nJe vois la lumière\\n\\n[Chorus]\\nJe chante",
             preserve_sections=True,
         )
         self.assertTrue(done)
         self.assertIn("[Verse 1]", translated)
         self.assertIn("[Chorus]", translated)
-        self.assertIn("Line of country song", translated)
+        self.assertIn("I dream of leaving", translated)
+        self.assertNotIn("Je rêve", translated)
+
+    def test_already_english_needs_no_network(self):
+        with patch("text_tools.requests.get") as get:
+            translated, changed = translate_to_english(
+                "A bright indie rock song featuring jangly guitars and warm vocal harmonies."
+            )
+        self.assertFalse(changed)
+        self.assertIn("guitars", translated)
+        get.assert_not_called()
+
+    def test_stream_deadline_stops_heartbeat_loop(self):
+        from ace_client import ACEError
+        with self.assertRaises(ACEError) as raised:
+            parse_stream(["data: [DONE]", ""], deadline_at=0)
+        self.assertIn("4 minutes", str(raised.exception))
 
     def test_sse_heartbeat_and_audio(self):
         """Assemblage des fragments SSE + battements de coeur sans appel réseau."""
