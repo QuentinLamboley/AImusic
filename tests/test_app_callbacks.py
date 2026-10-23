@@ -155,7 +155,8 @@ class WriterButtonsTest(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(api.call_count, 1)
         sent = api.call_args.kwargs["json"]["messages"][0]["content"]
-        self.assertEqual(sent, "A cheerful country song with acoustic guitar")
+        self.assertTrue(sent.startswith("A cheerful country song with acoustic guitar"))
+        self.assertIn("lyrics in French", sent)
         self.assertEqual(len(app.session_state["tracks"]), 1)
 
     def test_random_generation_works_without_translation_services(self):
