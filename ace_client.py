@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -14,6 +15,8 @@ BASE_URL = "https://api.acemusic.ai"
 MODEL = "acemusic/acestep-v15-turbo"
 MIME = {"mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac", "ogg": "audio/ogg", "aac": "audio/aac", "m4a": "audio/mp4"}
 MAX_AUDIO_BYTES = 55 * 1024 * 1024
+MAX_GENERATION_SECONDS = 240
+STREAM_IDLE_TIMEOUT_SECONDS = 40
 
 
 class ACEError(Exception):
@@ -83,6 +86,11 @@ def build_payload(
         "sample_mode": mode == "simple",
         "thinking": bool(thinking),
         "use_format": bool(use_format) if mode == "custom" else False,
+        # Le prompt et la langue sont fournis : ne pas relancer plusieurs
+        # passes de planification LLM pour les déduire à nouveau.
+        "use_cot_caption": False,
+        "use_cot_language": False,
+        "use_cot_metas": False,
         "batch_size": 1,
         "audio_config": cfg,
     }
@@ -204,7 +212,12 @@ def parse_response(data: dict[str, Any], fallback_format: str = "mp3") -> MusicR
     )
 
 
-def parse_stream(lines: Any, fallback_format: str = "mp3", on_progress: Any = None) -> MusicResult:
+def parse_stream(
+    lines: Any,
+    fallback_format: str = "mp3",
+    on_progress: Any = None,
+    deadline_at: float | None = None,
+) -> MusicResult:
     """Assemble le flux SSE ACE-Step (métadonnées, battements de coeur, audio).
 
     Un évènement peut occuper plusieurs lignes 'data:'. Les morceaux audio base64
@@ -216,6 +229,9 @@ def parse_stream(lines: Any, fallback_format: str = "mp3", on_progress: Any = No
     saw_event = False
     started_generation = False
     event_lines: list[str] = []
+    started_at = time.monotonic()
+    last_heartbeat_notice = -12.0
+    deadline_at = deadline_at if deadline_at is not None else started_at + MAX_GENERATION_SECONDS
 
     def emit(message: str) -> None:
         if on_progress is not None:
@@ -225,7 +241,7 @@ def parse_stream(lines: Any, fallback_format: str = "mp3", on_progress: Any = No
                 pass  # Une mise à jour UI ne doit pas gâcher un morceau.
 
     def handle_event(text: str) -> bool:
-        nonlocal model_id, saw_event, started_generation
+        nonlocal model_id, saw_event, started_generation, last_heartbeat_notice
         if text.strip() == "[DONE]":
             return True
         try:
@@ -252,8 +268,11 @@ def parse_stream(lines: Any, fallback_format: str = "mp3", on_progress: Any = No
             if not started_generation:
                 emit("🎼 Analyse musicale et préparation des paroles…")
                 started_generation = True
-        if content == "." and not started_generation:
-            emit("🎚️ Le serveur compose votre musique…")
+        if content == ".":
+            elapsed = time.monotonic() - started_at
+            if elapsed - last_heartbeat_notice >= 12.0:
+                emit(f"🎚️ Composition en cours ({int(elapsed)} s)…")
+                last_heartbeat_notice = elapsed
             started_generation = True
         audio = delta.get("audio") or []
         if isinstance(audio, (str, dict)):
@@ -265,6 +284,11 @@ def parse_stream(lines: Any, fallback_format: str = "mp3", on_progress: Any = No
 
     try:
         for raw in lines:
+            if time.monotonic() > deadline_at:
+                raise ACEError(
+                    "ACE Music n'a pas terminé la composition dans les 4 minutes. "
+                    "L'attente a été arrêtée sans relancer automatiquement la requête."
+                )
             if isinstance(raw, bytes):
                 line = raw.decode("utf-8", errors="replace")
             else:
@@ -320,6 +344,7 @@ def generate_music(
     # Le streaming fournit des évènements réguliers, contrairement à une unique
     # réponse bloquante, et peut éviter certains délais d'attente réseau.
     request_payload["stream"] = True
+    deadline_at = time.monotonic() + MAX_GENERATION_SECONDS
     try:
         response = requests.post(
             f"{BASE_URL}/v1/chat/completions",
@@ -329,7 +354,7 @@ def generate_music(
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream, application/json",
             },
-            timeout=(20, 150),  # Délai entre deux données, PAS durée totale.
+            timeout=(15, STREAM_IDLE_TIMEOUT_SECONDS),  # Délai d'inactivité entre deux données.
             stream=True,
             allow_redirects=False,
         )
@@ -364,7 +389,9 @@ def generate_music(
         content_type = (response.headers or {}).get("content-type", "").lower()
         fallback_format = request_payload.get("audio_config", {}).get("format", "mp3")
         if "text/event-stream" in content_type:
-            return parse_stream(response.iter_lines(), fallback_format, on_progress)
+            return parse_stream(
+                response.iter_lines(), fallback_format, on_progress, deadline_at=deadline_at
+            )
 
         # Compatibilité avec un serveur qui ignore 'stream: true'.
         try:
