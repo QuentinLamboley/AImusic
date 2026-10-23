@@ -65,9 +65,11 @@ class WriterButtonsTest(unittest.TestCase):
                 "audio": [{"audio_url": {"url": "data:audio/mpeg;base64," + audio}}]
             }}]
         }
-        with patch("text_tools.GoogleTranslator", side_effect=RuntimeError("offline")), \\
-             patch("text_tools.MyMemoryTranslator", side_effect=RuntimeError("offline")), \\
-             patch("ace_client.requests.post", return_value=response) as request:
+        with (
+            patch("text_tools.GoogleTranslator", side_effect=RuntimeError("offline")),
+            patch("text_tools.MyMemoryTranslator", side_effect=RuntimeError("offline")),
+            patch("ace_client.requests.post", return_value=response) as request,
+        ):
             app = click_by_label(app, "✦ Créer ma musique")
         self.assertFalse(app.exception)
         self.assertEqual(request.call_count, 1)
@@ -86,9 +88,11 @@ class WriterButtonsTest(unittest.TestCase):
                 "audio": [{"audio_url": {"url": "data:audio/mpeg;base64," + audio}}]
             }}]
         }
-        with patch("text_tools.GoogleTranslator", side_effect=AssertionError("no translation")), \\
-             patch("text_tools.MyMemoryTranslator", side_effect=AssertionError("no translation")), \\
-             patch("ace_client.requests.post", return_value=response) as request:
+        with (
+            patch("text_tools.GoogleTranslator", side_effect=AssertionError("no translation")),
+            patch("text_tools.MyMemoryTranslator", side_effect=AssertionError("no translation")),
+            patch("ace_client.requests.post", return_value=response) as request,
+        ):
             app = click_by_label(app, "✦ Créer ma musique")
         self.assertFalse(app.exception)
         self.assertEqual(request.call_count, 1)
