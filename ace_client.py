@@ -44,6 +44,7 @@ def build_payload(
     time_signature: str = "",
     audio_format: str = "mp3",
     instrumental: bool = False,
+    vocal_language: str = "fr",
     thinking: bool = True,
     use_format: bool = False,
     seed: int | None = None,
@@ -55,12 +56,14 @@ def build_payload(
         raise ValueError("Il faut décrire la musique.")
     if audio_format not in ("mp3", "wav", "flac"):
         raise ValueError("Format audio non pris en charge.")
+    if vocal_language not in ("fr", "en", "es", "de", "it", "pt"):
+        raise ValueError("Langue des paroles non prise en charge.")
     if not 10 <= int(duration) <= 600:
         raise ValueError("La durée doit être comprise entre 10 et 600 secondes.")
     cfg: dict[str, Any] = {
         "duration": int(duration),
         "format": audio_format,
-        "vocal_language": "en",
+        "vocal_language": vocal_language,
         "instrumental": bool(instrumental),
     }
     if bpm is not None:
@@ -84,6 +87,7 @@ def build_payload(
         "messages": [{"role": "user", "content": content}],
         "stream": True,
         "sample_mode": mode == "simple",
+        "vocal_language": vocal_language,
         "thinking": bool(thinking),
         "use_format": bool(use_format) if mode == "custom" else False,
         # Le prompt et la langue sont fournis : ne pas relancer plusieurs
