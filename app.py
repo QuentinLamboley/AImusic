@@ -10,7 +10,8 @@ from typing import Any
 import streamlit as st
 
 from ace_client import ACEError, MusicResult, build_payload, generate_music
-from text_tools import EXAMPLES, draft_lyrics, structure_lyrics, translate_to_english
+from text_tools import EXAMPLES, draft_lyrics, structure_lyrics, translate_to_english, is_probably_french
+from random_music import make_random_idea
 
 st.set_page_config(
     page_title="MÉLODIA • Studio musical IA",
@@ -71,6 +72,7 @@ DEFAULTS: dict[str, Any] = {
     "draft_preview": "",
     "tracks": [],
     "notice": "",
+    "random_idea": None,
 }
 for name, default in DEFAULTS.items():
     if name not in st.session_state:
@@ -112,6 +114,10 @@ def send_draft_to_composer() -> None:
     st.session_state["song_lyrics"] = structure_lyrics(current)
     st.session_state["song_mode"] = "Personnalisé"
     st.session_state["melodia_active_tab"] = "🎹  Composer"
+
+
+def refresh_random_idea() -> None:
+    st.session_state["random_idea"] = make_random_idea()
 
 
 def forget_api_key() -> None:
@@ -205,21 +211,42 @@ def prepare_english(text: str, preserve: bool = False) -> str:
     try:
         prepared, _ = translate_to_english(text, preserve_sections=preserve)
         return prepared
-    except Exception as exc:
-        raise ValueError("Impossible de préparer le texte pour la composition. Réessaie plus tard.") from exc
+    except Exception:
+        # Les services de traduction sont tiers : un incident chez eux ne doit
+        # jamais empêcher l'envoi de la composition à ACE Music.
+        return text
 
 
 def run_generation(mode: str, title: str, original_prompt: str, custom_lyrics: str = "", **kwargs: Any) -> MusicResult:
     if not st.session_state.get("ace_api_key", "").strip():
         raise ACEError("Ajoute d'abord ta clé API ACE Music dans la barre de gauche.")
-    english = prepare_english(original_prompt.strip())
+    pretranslated_prompt = kwargs.pop("pretranslated_prompt", None)
+    english = pretranslated_prompt if pretranslated_prompt is not None else prepare_english(original_prompt.strip())
     if not english.strip():
         raise ValueError("Décris d'abord ta musique.")
     lyrics_en = prepare_english(custom_lyrics, preserve=True) if mode == "custom" and custom_lyrics.strip() else custom_lyrics
+    # Dernier recours : laisser le moteur interpréter le texte en français
+    # plutôt que bloquer systématiquement les créations. Une adaptation
+    # fidèle en anglais n'est alors pas garantie.
+    if is_probably_french(english):
+        english = (
+            "Compose an original song with expressive English-language lyrics. "
+            "Interpret this French musical direction accurately and naturally: "
+            + english
+        )
+    if mode == "custom" and lyrics_en.strip() and is_probably_french(lyrics_en):
+        english += (
+            "\nAdapt the supplied French lyrics into natural, singable English, "
+            "respecting their meaning and [Verse]/[Chorus] structure."
+        )
     on_progress = kwargs.pop("on_progress", None)
+    source_mode = kwargs.pop("source_mode", None)
     payload = build_payload(mode=mode, prompt=english, lyrics=lyrics_en, **kwargs)
     result = generate_music(st.session_state["ace_api_key"], payload, on_progress=on_progress)
-    add_track(result, title=title, original=original_prompt, source_mode="Simple" if mode == "simple" else "Personnalisé")
+    add_track(
+        result, title=title, original=original_prompt,
+        source_mode=source_mode or ("Simple" if mode == "simple" else "Personnalisé"),
+    )
     return result
 
 
@@ -268,10 +295,10 @@ with composer_tab:
     st.markdown("### Créez votre prochain morceau")
     st.radio(
         "Comment souhaitez-vous composer ?",
-        ["Simple", "Personnalisé"],
+        ["Simple", "Personnalisé", "Aléatoire"],
         key="song_mode",
         horizontal=True,
-        help="Simple : tout est généré à partir d'une description. Personnalisé : vous donnez le style et les paroles.",
+        help="Simple : décrivez votre idée. Personnalisé : indiquez le style et les paroles. Aléatoire : laissez le studio vous surprendre.",
     )
     if st.session_state["song_mode"] == "Simple":
         st.markdown(
@@ -288,6 +315,23 @@ with composer_tab:
             placeholder="Exemple : Une chanson rock des années 70, joyeuse et entraînante, "
             "avec une voix masculine grave, un solo de guitare électrique et des paroles "
             "sur un voyage en voiture au bord de la mer.",
+        )
+    elif st.session_state["song_mode"] == "Aléatoire":
+        if not st.session_state["random_idea"]:
+            refresh_random_idea()
+        st.markdown(
+            '<div class="glass-card"><span class="step-num">01</span>'
+            '<b>Laissez-vous surprendre</b><div class="muted" style="margin-top:10px">'
+            'Un style, une ambiance et une histoire tirés au hasard. Chaque idée '
+            'est unique et peut donner naissance à votre prochaine chanson.</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.button("🎲 Une autre inspiration", on_click=refresh_random_idea, use_container_width=True)
+        st.text_area(
+            "Votre inspiration musicale",
+            value=st.session_state["random_idea"]["fr"],
+            height=145,
+            disabled=True,
         )
     else:
         st.markdown(
@@ -351,16 +395,22 @@ with composer_tab:
     st.markdown('<div class="glass-card"><span class="step-num">03</span><b>Donnez vie à votre chanson</b></div>', unsafe_allow_html=True)
     if st.button("✦ Créer ma musique", type="primary", use_container_width=True, key="generate_main"):
         current_mode = st.session_state["song_mode"]
-        user_prompt = st.session_state["simple_description"] if current_mode == "Simple" else st.session_state["music_prompt"]
-        user_lyrics = "" if current_mode == "Simple" else st.session_state["song_lyrics"]
+        user_prompt = (
+            st.session_state["random_idea"]["fr"] if current_mode == "Aléatoire"
+            else st.session_state["simple_description"] if current_mode == "Simple"
+            else st.session_state["music_prompt"]
+        )
+        user_lyrics = st.session_state["song_lyrics"] if current_mode == "Personnalisé" else ""
         try:
             connection_status = st.empty()
             with st.spinner("🎵 Votre musique est en cours de composition chez ACE Music…"):
                 run_generation(
-                    mode="simple" if current_mode == "Simple" else "custom",
-                    title=st.session_state["song_title"],
+                    mode="custom" if current_mode == "Personnalisé" else "simple",
+                    title=st.session_state["song_title"] or (st.session_state["random_idea"]["title"] if current_mode == "Aléatoire" else ""),
                     original_prompt=user_prompt,
                     custom_lyrics=user_lyrics,
+                    pretranslated_prompt=st.session_state["random_idea"]["en"] if current_mode == "Aléatoire" else None,
+                    source_mode=current_mode,
                     duration=duration,
                     bpm=int(bpm) if set_bpm else None,
                     key_scale="" if key_scale == "Libre" else key_scale,
