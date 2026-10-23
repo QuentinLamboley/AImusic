@@ -9,7 +9,7 @@ from text_tools import structure_lyrics, translate_to_english, TranslationUnavai
 
 class TestPayload(unittest.TestCase):
     def test_simple(self):
-        data = build_payload(mode="simple", prompt="A bright jazz track", duration=80)
+        data = build_payload(mode="simple", prompt="A bright jazz track", duration=80, vocal_language="en")
         self.assertTrue(data["sample_mode"])
         self.assertTrue(data["stream"])
         self.assertFalse(data["use_cot_caption"])
@@ -28,6 +28,32 @@ class TestPayload(unittest.TestCase):
         self.assertIn("<lyrics>" + lyrics + "</lyrics>", content)
         self.assertFalse(data["sample_mode"])
         self.assertEqual(data["audio_config"]["bpm"], 115)
+
+    def test_default_language_is_french(self):
+        data = build_payload(mode="simple", prompt="A folk song in French")
+        self.assertEqual(data["audio_config"]["vocal_language"], "fr")
+        self.assertEqual(data["vocal_language"], "fr")
+
+    def test_custom_french_lyrics_are_sent_unchanged(self):
+        lyrics = "[Intro]\\n\\n[Verse 1]\\nLe vent souffle sur nos montagnes\\n\\n[Chorus]\\nJe reviens vers toi"
+        data = build_payload(
+            mode="custom", prompt="A warm country ballad",
+            lyrics=lyrics, vocal_language="fr",
+        )
+        self.assertEqual(data["vocal_language"], "fr")
+        self.assertEqual(data["audio_config"]["vocal_language"], "fr")
+        self.assertIn("<lyrics>" + lyrics + "</lyrics>", data["messages"][0]["content"])
+        self.assertNotIn("Write and sing the lyrics in English", data["messages"][0]["content"])
+
+    def test_selectable_language_codes(self):
+        for code in ("fr", "en", "es", "de", "it", "pt"):
+            with self.subTest(code=code):
+                data = build_payload(
+                    mode="simple", prompt="Acoustic guitar track", vocal_language=code,
+                )
+                self.assertEqual(data["audio_config"]["vocal_language"], code)
+        with self.assertRaises(ValueError):
+            build_payload(mode="simple", prompt="Music", vocal_language="invalid")
 
     def test_instrumental_without_lyrics(self):
         data = build_payload(mode="custom", prompt="Epic orchestra", lyrics="", instrumental=True)
