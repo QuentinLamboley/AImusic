@@ -214,8 +214,9 @@ def run_generation(mode: str, title: str, original_prompt: str, custom_lyrics: s
     translate_lyrics = kwargs.pop("translate_lyrics", True)
     if mode == "custom" and custom_lyrics.strip() and translate_lyrics:
         lyrics_en = prepare_english(custom_lyrics, True, preserve=True)
+    on_progress = kwargs.pop("on_progress", None)
     payload = build_payload(mode=mode, prompt=english, lyrics=lyrics_en, **kwargs)
-    result = generate_music(st.session_state["ace_api_key"], payload)
+    result = generate_music(st.session_state["ace_api_key"], payload, on_progress=on_progress)
     add_track(result, title=title, original=original_prompt, sent=english, source_mode="Simple" if mode == "simple" else "Personnalisé")
     return result
 
@@ -339,7 +340,7 @@ with composer_tab:
     )
     c1, c2, c3 = st.columns([1.2, 1, 1])
     with c1:
-        duration = st.slider("Durée souhaitée", min_value=20, max_value=360, step=10, value=120, format="%d s")
+        duration = st.slider("Durée souhaitée", min_value=20, max_value=360, step=10, value=60, format="%d s", help="Pour un premier essai, essayez une durée courte. Les générations longues risquent de dépasser les limites du serveur.")
     with c2:
         audio_format = st.selectbox("Format du fichier", ["mp3", "wav", "flac"], index=0)
     with c3:
@@ -361,12 +362,14 @@ with composer_tab:
         st.caption("La traduction utilise un service externe. Tous les réglages musicaux sont indicatifs : le modèle peut ne pas les suivre exactement.")
 
     st.markdown('<div class="glass-card"><span class="step-num">03</span><b>Donnez vie à votre chanson</b></div>', unsafe_allow_html=True)
-    st.caption("La génération sollicite l'API ACE Music. Une requête peut durer plusieurs minutes ; évitez de cliquer plusieurs fois.")
+    st.caption("Connexion continue activée (SSE). Une seule requête est envoyée, sans répétition automatique.")
+    st.info("Un HTTP 504 peut survenir dès le premier essai. Il a été signalé avec l'API ACE Music, même sur des extraits courts : un nouveau clic n'est pas une solution garantie.", icon="ℹ️")
     if st.button("✦ Créer ma musique", type="primary", use_container_width=True, key="generate_main"):
         current_mode = st.session_state["song_mode"]
         user_prompt = st.session_state["simple_description"] if current_mode == "Simple" else st.session_state["music_prompt"]
         user_lyrics = "" if current_mode == "Simple" else st.session_state["song_lyrics"]
         try:
+            connection_status = st.empty()
             with st.spinner("🎵 Votre musique est en cours de composition chez ACE Music…"):
                 run_generation(
                     mode="simple" if current_mode == "Simple" else "custom",
@@ -383,7 +386,9 @@ with composer_tab:
                     use_format=use_format and current_mode == "Personnalisé",
                     translate_prompt=translate_prompt,
                     translate_lyrics=translate_lyrics and current_mode == "Personnalisé",
+                    on_progress=lambda message: connection_status.info(message),
                 )
+            connection_status.empty()
             st.success("Votre musique est prête ! Écoutez-la puis téléchargez-la ci-dessous.", icon="🎶")
         except (ACEError, ValueError) as exc:
             st.error(str(exc))
@@ -426,6 +431,7 @@ with writer_tab:
                 description = st.session_state["writer_brief"].strip()
                 if not description:
                     raise ValueError("Décris d'abord le thème souhaité.")
+                writer_status = st.empty()
                 with st.spinner("ACE Music écrit votre chanson et compose une courte démo…"):
                     generated = run_generation(
                         mode="simple",
@@ -436,7 +442,9 @@ with writer_tab:
                         instrumental=False,
                         thinking=True,
                         translate_prompt=True,
+                        on_progress=lambda message: writer_status.info(message),
                     )
+                writer_status.empty()
                 if generated.lyrics:
                     st.session_state["draft_preview"] = generated.lyrics
                     st.success("Paroles IA récupérées ! Une démo sonore est aussi disponible dans votre bibliothèque.")
