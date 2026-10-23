@@ -1,0 +1,63 @@
+name: Vérifier MÉLODIA dans un vrai navigateur
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  chrome-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Installer le navigateur de contrôle
+        run: |
+          python -m pip install playwright==1.58.0
+          command -v google-chrome
+          google-chrome --version
+      - name: Ouvrir la page publique dans Chromium
+        run: |
+          python - <<'PY'
+          import shutil, time
+          from urllib.parse import urlsplit
+          from playwright.sync_api import sync_playwright
+          url = "https://aimusic-philou.streamlit.app/"
+          browser_path = shutil.which("google-chrome") or shutil.which("chromium")
+          if not browser_path:
+              raise RuntimeError("Chromium absent sur le serveur de test")
+          with sync_playwright() as p:
+              browser = p.chromium.launch(
+                  headless=True, executable_path=browser_path,
+                  args=["--no-sandbox", "--disable-dev-shm-usage"]
+              )
+              context = browser.new_context(
+                  viewport={"width": 1320, "height": 900},
+                  locale="fr-FR",
+              )
+              page = context.new_page()
+              failures = []
+              page.on("pageerror", lambda error: failures.append(str(error)[:260]))
+              first_status = "n/a"
+              try:
+                  resp = page.goto(url, wait_until="domcontentloaded", timeout=35000)
+                  first_status = resp.status if resp else "no-response"
+                  try:
+                      page.get_by_text("Langue des paroles").first.wait_for(timeout=65000)
+                      found = True
+                  except Exception:
+                      found = False
+                  print("FIRST_HTTP", first_status)
+                  print("LAST_URL_HOST", urlsplit(page.url).netloc)
+                  print("LAST_URL_PATH", urlsplit(page.url).path)
+                  print("TITLE", page.title()[:160])
+                  print("APP_RENDERED", found)
+                  print("BODY_HEAD", page.locator("body").inner_text(timeout=15000)[:750].replace("\n", " | "))
+                  print("JAVASCRIPT_ERRORS", failures[:4])
+                  if not found:
+                      raise AssertionError(
+                          "Navigateur réel : la langue des paroles n'est pas visible. "
+                          "Vérifier les paramètres Cloud et les logs de l'app."
+                      )
+              finally:
+                  browser.close()
+          PY
