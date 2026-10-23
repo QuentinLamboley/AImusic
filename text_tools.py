@@ -14,39 +14,42 @@ SECTIONS = ("Intro", "Verse 1", "Verse 2", "Chorus", "Verse 3", "Bridge", "Choru
 TAG_PATTERN = re.compile(r"^\s*\[[^\]\n]+\]\s*$")
 
 EXAMPLES = {
-    "prompt": "A melancholic post-punk track with angular guitar riffs, driving bass, and brooding baritone vocals. Features cold synth textures, mechanical drums, and a dark atmospheric production style.",
+    "prompt": "Une chanson country chaleureuse et entraînante, portée par une guitare acoustique, une pedal steel guitar, une basse ronde et une batterie légère. Voix masculine grave et chaleureuse, mélodie mémorable, ambiance de route au coucher du soleil, son organique et authentique.",
     "lyrics": """[Intro]
 
 [Verse 1]
-Fluorescent lights flicker and fade
-Another night another masquerade
-Faces blur in the crowded room
-Dancing slowly toward our doom
+Le vieux moteur gronde au petit matin
+Sur la route qui traverse les sapins
+Le soleil embrase les collines
+Et le vent me souffle une mélodie
 
 [Verse 2]
-Conversations without meaning
-Smiles that hide the silent screaming
-We perform our daily roles
-Empty vessels hollow souls
+J'ai laissé la ville et ses lumières
+Pour retrouver le goût de la poussière
+Un café chaud sur le tableau de bord
+Et mille kilomètres à rêver encore
 
 [Chorus]
-We're all just ghosts in the machine
-Going through motions in between
-Searching for something that feels real
-Something that we can truly feel
+Sur la route, le cœur en liberté
+Je laisse les soucis s'envoler
+Sous le grand ciel et les étoiles
+Je trace ma route, je mets les voiles
 
 [Verse 3]
-Concrete towers touch the sky
-Millions living asking why
-Connected yet so far apart
-Lonely beats of every heart
+Dans le rétroviseur, tant de souvenirs
+Les petites routes où l'on aimait rire
+Chaque virage m'offre un horizon
+Et les mêmes accords, une chanson
 
 [Chorus]
-We're all just ghosts in the machine
-Going through motions in between
+Sur la route, le cœur en liberté
+Je laisse les soucis s'envoler
+Sous le grand ciel et les étoiles
+Je trace ma route, je mets les voiles
 
 [Outro]
-Ghosts in the machine"""
+Un dernier soleil sur le chemin
+Et la musique jusqu'à demain"""
 }
 
 MOODS = {
@@ -69,60 +72,114 @@ MOODS = {
 }
 
 
+_FRENCH_MARKERS = {
+    "avec", "sans", "une", "des", "dans", "pour", "les", "aux", "sur",
+    "comme", "chanson", "musique", "chant", "voix", "guitare",
+    "guitares", "batterie", "violon", "refrain", "couplet", "rythme",
+    "douce", "doux", "joyeux", "joyeuse", "mélancolique", "entraînant",
+    "entraînante", "grave", "chaude", "chaleureuse", "acoustique",
+    "électrique", "je", "tu", "nous", "mon", "ma", "mes", "notre", "le",
+    "la", "un", "est", "sont", "être", "qui", "que", "me", "te",
+}
+_MUSICAL_MARKERS = {
+    "chanson", "musique", "voix", "guitare", "guitares", "batterie",
+    "violon", "refrain", "couplet", "rythme", "acoustique", "entraînante",
+    "électrique",
+}
+
+
 def is_probably_french(text: str) -> bool:
-    sample = re.sub(r"\[[^]]+\]", "", text).strip()
-    if len(sample) < 18:
+    """Reconnaît aussi des prompts français très courts, sans altérer l'anglais."""
+    sample = re.sub(r"\\[[^]\\n]+\\]", "", text).strip()
+    if not sample:
         return False
+    words = [w.lower() for w in re.findall(r"[A-Za-zÀ-ÿœŒ]+", sample)]
+    markers = sum(word in _FRENCH_MARKERS for word in words)
+    if re.search(r"[àâçéèêëîïôùûüÿœ]", sample.lower()):
+        return True
+    if markers >= 2 or any(word in _MUSICAL_MARKERS for word in words):
+        return True
     try:
         return detect(sample) == "fr"
     except LangDetectException:
         return False
 
 
+def _natural_musical_english(text: str) -> str:
+    """Adapte quelques tournures fréquentes aux conventions des prompts musicaux."""
+    substitutions = (
+        (r"\\ba country music\\b", "a country song"),
+        (r"\\ba music of the country style\\b", "a country song"),
+        (r"\\ba serious male voice\\b", "a deep male voice"),
+        (r"\\ba grave male voice\\b", "rich baritone vocals"),
+        (r"\\ba deep and warm male voice\\b", "warm baritone vocals"),
+        (r"\\ba deep male voice\\b", "deep male vocals"),
+        (r"\\ba driving battery\\b", "driving drums"),
+        (r"\\bsoft battery\\b", "gentle drums"),
+        (r"\\bround bass\\b", "warm, rounded bass"),
+        (r"\\bvery rhythmic\\b", "driving and rhythmic"),
+        (r"\\ba warm and warm\\b", "warm"),
+    )
+    for source, target in substitutions:
+        text = re.sub(source, target, text, flags=re.IGNORECASE)
+    return text
+
+
 def translate_to_english(text: str, *, force: bool = False, preserve_sections: bool = False) -> tuple[str, bool]:
-    """Traduction via un service tiers ; aucune clé musicale n'est transmise."""
+    """Préparation linguistique idiomatique des contenus transmis au moteur.
+
+    Les balises de structure et la mise en vers restent inchangées.
+    Les saisies déjà anglaises sont utilisées telles quelles.
+    """
     if not text.strip():
         return text, False
     if not force and not is_probably_french(text):
         return text, False
     translator = GoogleTranslator(source="auto", target="en")
+
+    def translate_passage(source: str) -> str:
+        if len(source) > 4500:
+            raise ValueError("Texte trop long pour le traitement linguistique.")
+        result = translator.translate(source)
+        if not result or not result.strip():
+            raise ValueError("Le traitement linguistique n'a pas abouti.")
+        return _natural_musical_english(result.strip())
+
     if not preserve_sections:
-        translated = translator.translate(text[:4500])
-        if len(text) > 4500:
-            raise ValueError("La description dépasse la longueur prise en charge pour la traduction.")
-        if not translated:
-            raise ValueError("Le traducteur n'a pas retourné de texte.")
-        return translated, True
-    # Conserver exactement les balises [Verse 1], [Chorus], [Intro], etc.
-    result: list[str] = []
-    fragments = text.splitlines(keepends=True)
-    buffer: list[str] = []
+        return translate_passage(text), True
 
-    def flush() -> None:
-        if not buffer:
+    # Chaque section est traitée en conservant le contexte du couplet, puis ses
+    # lignes : un changement de mise en forme du traducteur ne doit pas fusionner
+    # des vers qui doivent être chantés séparément.
+    translated: list[str] = []
+    stanza: list[str] = []
+
+    def flush_stanza() -> None:
+        if not stanza:
             return
-        source = "".join(buffer)
-        if source.strip():
-            # 4000 caractères par appel, tout en maintenant le groupe de vers.
-            translated = translator.translate(source[:4500])
-            if len(source) > 4500:
-                raise ValueError("Un couplet est trop long pour le service de traduction.")
-            if not translated:
-                raise ValueError("Traduction indisponible.")
-            result.append(translated.strip() + "\n")
-        buffer.clear()
-
-    for line in fragments:
-        if TAG_PATTERN.match(line):
-            flush()
-            result.append(line.rstrip("\r\n") + "\n")
-        elif not line.strip():
-            flush()
-            result.append("\n")
+        source = "\\n".join(stanza)
+        if not force and not is_probably_french(source):
+            translated.extend(stanza)
         else:
-            buffer.append(line)
-    flush()
-    return "".join(result).strip(), True
+            candidate = translate_passage(source)
+            candidate_lines = candidate.splitlines()
+            if len(candidate_lines) == len(stanza) and all(line.strip() for line in candidate_lines):
+                translated.extend(line.strip() for line in candidate_lines)
+            else:
+                translated.extend(translate_passage(line) for line in stanza)
+        stanza.clear()
+
+    for line in text.splitlines():
+        if TAG_PATTERN.fullmatch(line):
+            flush_stanza()
+            translated.append(line.strip())
+        elif not line.strip():
+            flush_stanza()
+            translated.append("")
+        else:
+            stanza.append(line)
+    flush_stanza()
+    return "\\n".join(translated).strip(), True
 
 
 def structure_lyrics(text: str) -> str:
