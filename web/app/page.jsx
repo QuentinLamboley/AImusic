@@ -61,15 +61,15 @@ function parseLyrics(text){
 }
 function extractAudio(obj){
   const m=obj?.choices?.[0]?.delta||obj?.choices?.[0]?.message||obj?.message||obj;
-  if(typeof m?.content==="string")return {content:m.content,audio:null};
+  const text=typeof m?.content==="string"?m.content:"";
   const samples=m?.audio||m?.audio_data||m?.audio_base64||[];
   const items=Array.isArray(samples)?samples:[samples];
   for(const item of items){
-    if(typeof item==="string"&&item.startsWith("data:audio/"))return {audio:item,content:""};
+    if(typeof item==="string"&&item.startsWith("data:audio/"))return {audio:item,content:text};
     const source=item?.audio_url?.url||item?.audio_url||item?.url||item?.data||item?.b64_json;
-    if(typeof source==="string"&&source.startsWith("data:audio/"))return {audio:source,content:""};
+    if(typeof source==="string"&&source.startsWith("data:audio/"))return {audio:source,content:text};
   }
-  return {audio:null,content:""};
+  return {audio:null,content:text};
 }
 function blobFromAudio(source){
   const pos=source.indexOf(",");
