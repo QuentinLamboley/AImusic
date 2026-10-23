@@ -125,12 +125,10 @@ class TestPayload(unittest.TestCase):
     @patch("text_tools.requests.get")
     def test_verses_preserved_in_english(self, get):
         response = Mock(status_code=200)
-        response.json.return_value = [[["I dream of leaving\\nI see the light\\nI sing", ""]]]
+        response.json.return_value = [[["I dream of leaving\nI see the light\nI sing", ""]]]
         get.return_value = response
-        translated, done = translate_to_english(
-            "[Verse 1]\\nJe rêve de partir\\nJe vois la lumière\\n\\n[Chorus]\\nJe chante",
-            preserve_sections=True,
-        )
+        source = "[Verse 1]\nJe rêve de partir\nJe vois la lumière\n\n[Chorus]\nJe chante"
+        translated, done = translate_to_english(source, preserve_sections=True)
         self.assertTrue(done)
         self.assertIn("[Verse 1]", translated)
         self.assertIn("[Chorus]", translated)
