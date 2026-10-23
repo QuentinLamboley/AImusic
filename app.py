@@ -99,7 +99,7 @@ def insert_example() -> None:
     st.session_state["music_prompt"] = EXAMPLES["prompt"]
     st.session_state["song_lyrics"] = EXAMPLES["lyrics"]
     st.session_state["song_mode"] = "Personnalisé"
-    st.session_state["song_title"] = "Ghosts in the Machine"
+    st.session_state["song_title"] = "La route et le vent"
 
 
 def append_tag(tag: str) -> None:
@@ -107,19 +107,7 @@ def append_tag(tag: str) -> None:
     st.session_state["song_lyrics"] = (existing + "\n\n" if existing else "") + f"[{tag}]\n"
 
 
-def translate_custom_lyrics() -> None:
-    try:
-        translated, changed = translate_to_english(
-            st.session_state.get("song_lyrics", ""), force=True, preserve_sections=True
-        )
-        if changed:
-            st.session_state["song_lyrics"] = translated
-            flash("Paroles traduites en anglais. Vérifie-les avant de lancer la création.")
-    except Exception:
-        flash("Traduction indisponible pour le moment. Vérifie la connexion et réessaie.")
-
-
-def add_track(result: MusicResult, *, title: str, original: str, sent: str, source_mode: str) -> None:
+def add_track(result: MusicResult, *, title: str, original: str, source_mode: str) -> None:
     record = {
         "title": title.strip() or f"Composition du {datetime.now().strftime('%d/%m à %H:%M')}",
         "created": datetime.now().strftime("%d/%m/%Y · %H:%M"),
@@ -127,7 +115,6 @@ def add_track(result: MusicResult, *, title: str, original: str, sent: str, sour
         "format": result.audio_format,
         "mime": result.mime,
         "original_prompt": original,
-        "english_prompt": sent,
         "mode": source_mode,
         "lyrics": result.lyrics,
         "details": result.description,
@@ -164,8 +151,8 @@ def render_song(track: dict[str, Any], index: int, namespace: str = "composer") 
     c2.download_button(
         "📄 Paroles et description",
         data=(
-            f"{track['title']}\n\nDESCRIPTION ENVOYÉE À ACE MUSIC\n"
-            f"{track['english_prompt']}\n\nPAROLES\n{track['lyrics']}\n"
+            f"{track['title']}\n\nDESCRIPTION MUSICALE\n"
+            f"{track['original_prompt']}\n\nPAROLES\n{track['lyrics']}\n"
         ).encode("utf-8"),
         file_name=f"{file_stub(track['title'])}-paroles.txt",
         mime="text/plain",
@@ -181,9 +168,9 @@ def render_song(track: dict[str, Any], index: int, namespace: str = "composer") 
         use_container_width=True,
         key=f"project_{namespace}_{index}",
     )
-    with st.expander("Voir le prompt envoyé et les paroles obtenues"):
-        st.markdown("**Description envoyée (anglais)**")
-        st.code(track["english_prompt"], language=None)
+    with st.expander("Voir la description et les paroles obtenues"):
+        st.markdown("**Description musicale**")
+        st.code(track["original_prompt"], language=None)
         if track["lyrics"]:
             st.markdown("**Paroles retournées par ACE Music**")
             st.code(track["lyrics"], language=None)
@@ -191,33 +178,25 @@ def render_song(track: dict[str, Any], index: int, namespace: str = "composer") 
             st.caption("Le service n'a pas fourni de paroles distinctes dans ses métadonnées.")
 
 
-def prepare_english(text: str, do_translate: bool, preserve: bool = False) -> str:
-    if not do_translate:
-        return text
+def prepare_english(text: str, preserve: bool = False) -> str:
     try:
-        english, _ = translate_to_english(text, preserve_sections=preserve)
-        return english
+        prepared, _ = translate_to_english(text, preserve_sections=preserve)
+        return prepared
     except Exception as exc:
-        raise ValueError(
-            "La traduction automatique est indisponible : tu peux la désactiver et saisir "
-            "directement ton texte en anglais, ou réessayer plus tard."
-        ) from exc
+        raise ValueError("Impossible de préparer le texte pour la composition. Réessaie plus tard.") from exc
 
 
 def run_generation(mode: str, title: str, original_prompt: str, custom_lyrics: str = "", **kwargs: Any) -> MusicResult:
     if not st.session_state.get("ace_api_key", "").strip():
         raise ACEError("Ajoute d'abord ta clé API ACE Music dans la barre de gauche.")
-    english = prepare_english(original_prompt.strip(), kwargs.pop("translate_prompt", True))
+    english = prepare_english(original_prompt.strip())
     if not english.strip():
         raise ValueError("Décris d'abord ta musique.")
-    lyrics_en = custom_lyrics
-    translate_lyrics = kwargs.pop("translate_lyrics", True)
-    if mode == "custom" and custom_lyrics.strip() and translate_lyrics:
-        lyrics_en = prepare_english(custom_lyrics, True, preserve=True)
+    lyrics_en = prepare_english(custom_lyrics, preserve=True) if mode == "custom" and custom_lyrics.strip() else custom_lyrics
     on_progress = kwargs.pop("on_progress", None)
     payload = build_payload(mode=mode, prompt=english, lyrics=lyrics_en, **kwargs)
     result = generate_music(st.session_state["ace_api_key"], payload, on_progress=on_progress)
-    add_track(result, title=title, original=original_prompt, sent=english, source_mode="Simple" if mode == "simple" else "Personnalisé")
+    add_track(result, title=title, original=original_prompt, source_mode="Simple" if mode == "simple" else "Personnalisé")
     return result
 
 
@@ -244,24 +223,13 @@ with st.sidebar:
     st.link_button("Obtenir ma clé gratuite ↗", "https://acemusic.ai/api-key", use_container_width=True)
     st.caption("Ne communiquez jamais votre clé à quelqu'un. Elle reste dans la mémoire de votre session Streamlit, puis est transmise à ACE Music pour authentifier vos demandes.")
     st.button("Oublier la clé de cette session", use_container_width=True, on_click=forget_api_key)
-    st.divider()
-    st.markdown("#### ✨ Prise en main")
-    st.markdown(
-        '<p class="muted">1 · Décrivez votre idée en français.<br>'
-        '2 · Choisissez Simple ou Personnalisé.<br>'
-        '3 · Lancez la création et téléchargez le morceau.</p>',
-        unsafe_allow_html=True,
-    )
-    st.caption("Aucun GPU ni programme supplémentaire nécessaire sur votre ordinateur.")
-    st.link_button("Découvrir ACE Music ↗", "https://acemusic.ai/playground/create", use_container_width=True)
 
 st.markdown(
     '<div class="hero-wrap"><div class="eyebrow">LE STUDIO OÙ VOS IDÉES DEVIENNENT MUSIQUE</div>'
     '<div class="hero-title">Imaginez. Composez.<br><span style="color:#b9a5ff">Écoutez.</span></div>'
     '<div class="hero-desc">Décrivez votre morceau en français, personnalisez les paroles ou '
     'laissez l’intelligence artificielle composer pour vous. Aucune installation, juste de la musique.</div>'
-    '<div style="margin-top:16px"><span class="pill">✦ Propulsé par ACE Music</span> '
-    '<span class="pill">🇫🇷 Interface 100 % française</span></div></div>',
+    '</div>',
     unsafe_allow_html=True,
 )
 
@@ -305,7 +273,7 @@ with composer_tab:
             'Les marqueurs [Intro], [Verse 1], [Chorus] et [Outro] structurent la chanson.</div></div>',
             unsafe_allow_html=True,
         )
-        st.button("✦ Charger votre exemple post-punk", on_click=insert_example)
+        st.button("✦ Charger votre exemple country", on_click=insert_example)
         st.text_area(
             "Description musicale (prompt)",
             key="music_prompt",
@@ -326,9 +294,6 @@ with composer_tab:
             placeholder="[Intro]\n\n[Verse 1]\nPremier vers…\nDeuxième vers…\n\n[Chorus]\nMon refrain…\n\n[Outro]",
             help="Structure recommandée : [Intro], [Verse 1], [Verse 2], [Chorus], [Bridge], [Outro].",
         )
-        c_t1, c_t2 = st.columns([1.2, 2])
-        c_t1.button("🌐 Traduire les paroles en anglais", on_click=translate_custom_lyrics, use_container_width=True)
-        c_t2.caption("Les balises [Verse], [Chorus], etc. sont conservées.")
 
     st.markdown(
         '<div class="glass-card"><span class="step-num">02</span><b>Réglez la création</b></div>',
@@ -357,13 +322,9 @@ with composer_tab:
             time_signature = st.selectbox("Signature rythmique", ["Libre", "4/4", "3/4", "6/8", "2/4"])
         thinking = st.checkbox("Composition enrichie (modèle de planification)", value=True)
         use_format = st.checkbox("Laisser ACE Music améliorer la présentation du prompt personnalisé", value=False, disabled=st.session_state["song_mode"] == "Simple")
-        translate_prompt = st.checkbox("Traduire automatiquement la description française en anglais", value=True)
-        translate_lyrics = st.checkbox("Traduire automatiquement les paroles françaises en anglais", value=True, disabled=st.session_state["song_mode"] == "Simple")
-        st.caption("La traduction utilise un service externe. Tous les réglages musicaux sont indicatifs : le modèle peut ne pas les suivre exactement.")
+        st.caption("Tous les réglages musicaux sont indicatifs : le modèle peut ne pas les suivre exactement.")
 
     st.markdown('<div class="glass-card"><span class="step-num">03</span><b>Donnez vie à votre chanson</b></div>', unsafe_allow_html=True)
-    st.caption("Connexion continue activée (SSE). Une seule requête est envoyée, sans répétition automatique.")
-    st.info("Un HTTP 504 peut survenir dès le premier essai. Il a été signalé avec l'API ACE Music, même sur des extraits courts : un nouveau clic n'est pas une solution garantie.", icon="ℹ️")
     if st.button("✦ Créer ma musique", type="primary", use_container_width=True, key="generate_main"):
         current_mode = st.session_state["song_mode"]
         user_prompt = st.session_state["simple_description"] if current_mode == "Simple" else st.session_state["music_prompt"]
@@ -384,8 +345,6 @@ with composer_tab:
                     instrumental=instrumental,
                     thinking=thinking,
                     use_format=use_format and current_mode == "Personnalisé",
-                    translate_prompt=translate_prompt,
-                    translate_lyrics=translate_lyrics and current_mode == "Personnalisé",
                     on_progress=lambda message: connection_status.info(message),
                 )
             connection_status.empty()
@@ -436,12 +395,11 @@ with writer_tab:
                     generated = run_generation(
                         mode="simple",
                         title="Ébauche IA : " + description[:45],
-                        original_prompt="Write expressive, complete original song lyrics about: " + prepare_english(description, True) + ". Structure with [Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro].",
+                        original_prompt="Write expressive, complete original song lyrics about: " + prepare_english(description) + ". Structure with [Intro], [Verse 1], [Chorus], [Verse 2], [Chorus], [Outro].",
                         duration=60,
                         audio_format="mp3",
                         instrumental=False,
                         thinking=True,
-                        translate_prompt=True,
                         on_progress=lambda message: writer_status.info(message),
                     )
                 writer_status.empty()
@@ -461,20 +419,9 @@ with writer_tab:
         height=355,
         placeholder="[Verse 1]\n…\n\n[Chorus]\n…",
     )
-    q1, q2 = st.columns(2)
-    with q1:
-        if st.button("🔧 Structurer les paroles", use_container_width=True):
-            newdraft = structure_lyrics(st.session_state["draft_preview"])
-            queue_fields(draft_preview=newdraft)
-    with q2:
-        if st.button("🌐 Traduire le brouillon en anglais", use_container_width=True):
-            try:
-                translated, _ = translate_to_english(
-                    st.session_state["draft_preview"], force=True, preserve_sections=True
-                )
-                queue_fields(draft_preview=translated)
-            except Exception:
-                st.warning("Traduction indisponible. Tu peux conserver le texte français ou réessayer.")
+    if st.button("🔧 Structurer les paroles", use_container_width=True):
+        newdraft = structure_lyrics(st.session_state["draft_preview"])
+        queue_fields(draft_preview=newdraft)
     if st.button("↗ Utiliser ces paroles en mode Personnalisé", type="primary", use_container_width=True):
         if not st.session_state["draft_preview"].strip():
             st.warning("Le brouillon est vide.")
@@ -510,7 +457,6 @@ with help_tab:
     st.markdown("**3. Mode Personnalisé.** Décrivez d'un côté les instruments, le style et la voix, et de l'autre les paroles avec les sections attendues.")
     st.code("[Intro]\n\n[Verse 1]\nPremière strophe\nDeuxième ligne\n\n[Chorus]\nUn refrain qui revient\n\n[Outro]\nDerniers mots", language=None)
     st.markdown("**4. Atelier de paroles.** L'ébauche hors ligne propose seulement des phrases modèles. Le bouton d'écriture IA appelle ACE Music, qui génère également une piste.")
-    st.markdown("**5. Traduction.** Les textes français peuvent être traduits en anglais automatiquement, et les balises de chanson sont préservées. La traduction s'appuie sur un service tiers.")
-    st.markdown("**6. Téléchargement.** Dès qu'un morceau apparaît, utilisez le bouton de téléchargement pour le conserver sur votre ordinateur.")
+    st.markdown("**5. Téléchargement.** Dès qu'un morceau apparaît, utilisez le bouton de téléchargement pour le conserver sur votre ordinateur.")
     st.warning("ACE Music est un service tiers : la disponibilité et les limites d'API sont indépendantes de cette application. Une erreur de délai ne signifie pas toujours que la requête a échoué côté serveur ; évitez les renvois en boucle.")
     st.info("Protection de votre clé : aucun fichier ou dépôt GitHub ne contient la clé. Elle sert uniquement aux requêtes de votre session. N'enregistrez pas de secret dans les champs de description ou de paroles.")
