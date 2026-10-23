@@ -90,7 +90,7 @@ _MUSICAL_MARKERS = {
 
 def is_probably_french(text: str) -> bool:
     """Reconnaît aussi des prompts français très courts, sans altérer l'anglais."""
-    sample = re.sub(r"\\[[^]\\n]+\\]", "", text).strip()
+    sample = re.sub(r"\[[^\n\]]+\]", "", text).strip()
     if not sample:
         return False
     words = [w.lower() for w in re.findall(r"[A-Za-zÀ-ÿœŒ]+", sample)]
@@ -108,17 +108,17 @@ def is_probably_french(text: str) -> bool:
 def _natural_musical_english(text: str) -> str:
     """Adapte quelques tournures fréquentes aux conventions des prompts musicaux."""
     substitutions = (
-        (r"\\ba country music\\b", "a country song"),
-        (r"\\ba music of the country style\\b", "a country song"),
-        (r"\\ba serious male voice\\b", "a deep male voice"),
-        (r"\\ba grave male voice\\b", "rich baritone vocals"),
-        (r"\\ba deep and warm male voice\\b", "warm baritone vocals"),
-        (r"\\ba deep male voice\\b", "deep male vocals"),
-        (r"\\ba driving battery\\b", "driving drums"),
-        (r"\\bsoft battery\\b", "gentle drums"),
-        (r"\\bround bass\\b", "warm, rounded bass"),
-        (r"\\bvery rhythmic\\b", "driving and rhythmic"),
-        (r"\\ba warm and warm\\b", "warm"),
+        (r"\ba country music\b", "a country song"),
+        (r"\ba music of the country style\b", "a country song"),
+        (r"\ba serious male voice\b", "a deep male voice"),
+        (r"\ba grave male voice\b", "rich baritone vocals"),
+        (r"\ba deep and warm male voice\b", "warm baritone vocals"),
+        (r"\ba deep male voice\b", "deep male vocals"),
+        (r"\ba driving battery\b", "driving drums"),
+        (r"\bsoft battery\b", "gentle drums"),
+        (r"\bround bass\b", "warm, rounded bass"),
+        (r"\bvery rhythmic\b", "driving and rhythmic"),
+        (r"\ba warm and warm\b", "warm"),
     )
     for source, target in substitutions:
         text = re.sub(source, target, text, flags=re.IGNORECASE)
@@ -157,7 +157,7 @@ def translate_to_english(text: str, *, force: bool = False, preserve_sections: b
     def flush_stanza() -> None:
         if not stanza:
             return
-        source = "\\n".join(stanza)
+        source = "\n".join(stanza)
         if not force and not is_probably_french(source):
             translated.extend(stanza)
         else:
@@ -179,7 +179,7 @@ def translate_to_english(text: str, *, force: bool = False, preserve_sections: b
         else:
             stanza.append(line)
     flush_stanza()
-    return "\\n".join(translated).strip(), True
+    return "\n".join(translated).strip(), True
 
 
 def structure_lyrics(text: str) -> str:
