@@ -25,6 +25,14 @@ streamlit run app.py
 
 Aucun GPU local requis. Aucune clé API dans le dépôt, les fichiers, les logs ou le cache. La clé est un champ mot de passe uniquement en mémoire de session ; elle devra être ressaisie après fermeture de session. **Ne pas saisir la clé dans les fichiers Streamlit Secrets publics ou les issues GitHub.**
 
+## Fiabilité de la génération et erreurs HTTP 504
+
+Le client utilise maintenant **`stream: true`** (Server-Sent Events, SSE) et assemble progressivement les métadonnées et l'audio. ACE-Step documente des battements de cœur toutes les 2 secondes pendant la génération, ce qui réduit le risque qu'un proxy coupe une connexion inactive. Le logiciel n'envoie **qu'un POST par clic**, sans relance automatique.
+
+**Attention :** un HTTP 504 peut survenir dès la première tentative, même pour des morceaux courts. Il existe un signalement public côté fournisseur : https://github.com/ace-step/ACE-Step-1.5/issues/1332 (18 septembre 2026). Une connexion SSE ne résout pas une indisponibilité serveur. Le message d'erreur ne signifie pas que la clé est invalide ou que l'utilisateur a dépassé son quota.
+
+Pour un test minimal, utiliser 20 à 40 secondes, MP3, mais un échec reste possible indépendamment du prompt.
+
 ## Limites et confidentialité
 
 - L’API hébergée d’ACE Music peut limiter le débit, être indisponible ou retourner des erreurs 504. Nous ne réessayons **jamais automatiquement** une génération susceptible d’avoir déjà abouti.
